@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compila (universale: Apple Silicon + Intel)
+      - name: "Compila (universale: Apple Silicon + Intel)"
         run: UNIVERSAL=1 NO_OPEN=1 bash build_app.sh
 
       - name: Crea lo zip dell'app (conserva i permessi)
