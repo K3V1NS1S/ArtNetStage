@@ -11,6 +11,23 @@ struct ContentView: View {
             stageArea
                 .frame(minWidth: 640, maxWidth: .infinity, maxHeight: .infinity)
         }
+        .navigationTitle(vm.windowTitle)
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button { vm.openProject() } label: {
+                    Label("Apri…", systemImage: "folder")
+                }
+                .help("Apri scena… (⌘O)")
+                Button { vm.saveProject() } label: {
+                    Label("Salva", systemImage: "square.and.arrow.down")
+                }
+                .help("Salva scena (⌘S)")
+                Button { vm.saveProjectAs() } label: {
+                    Label("Salva con nome…", systemImage: "square.and.arrow.down.on.square")
+                }
+                .help("Salva con nome… (⇧⌘S)")
+            }
+        }
     }
 
     // MARK: - Pannello laterale
@@ -35,10 +52,23 @@ struct ContentView: View {
                 case .fixtures: FixtureBuilderView()
                 case .stage: StagePanelView()
                 case .monitor: DMXMonitorView()
-                case .scenes: ScenesPanelView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+            HStack(spacing: 6) {
+                Image(systemName: "doc")
+                Text(vm.fileDisplayName + (vm.isDirty ? " •" : ""))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Text("\(AppInfo.name) \(AppInfo.version)")
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
         }
     }
 

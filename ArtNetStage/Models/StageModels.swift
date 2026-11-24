@@ -4,6 +4,9 @@ import Foundation
 
 /// Dimensioni del palco e delle americane (metri). Modificabili in tempo reale dal pannello "Palco".
 struct StageConfig: Codable, Hashable {
+    /// Alluminio: colore predefinito delle americane.
+    static let defaultTrussColorHex = "#A8ACB1"
+
     var width: Double = 12
     var depth: Double = 8
     /// Altezza del piano del palco dal suolo (0 = palco a terra).
@@ -11,6 +14,8 @@ struct StageConfig: Codable, Hashable {
     /// Altezza delle americane (asse centrale) sopra il piano del palco.
     var trussHeight: Double = 5
     var showTruss: Bool = true
+    /// Colore della struttura delle americane (#RRGGBB).
+    var trussColorHex: String = StageConfig.defaultTrussColorHex
     /// Ombre proiettate dai fasci sugli oggetti (disattivale se la scena rallenta).
     var beamShadows: Bool = true
 
@@ -18,6 +23,25 @@ struct StageConfig: Codable, Hashable {
     var frontTrussZ: Double { 0 }
     /// Posizione Z della seconda americana (verso il fondale).
     var backTrussZ: Double { -(depth / 2 - 0.5) }
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case width, depth, baseHeight, trussHeight, showTruss, trussColorHex, beamShadows
+    }
+
+    /// Decodifica tollerante: i file e i salvataggi creati prima dell'aggiunta di un campo
+    /// (per esempio il colore delle americane) restano leggibili e usano il valore predefinito.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        width = try c.decodeIfPresent(Double.self, forKey: .width) ?? 12
+        depth = try c.decodeIfPresent(Double.self, forKey: .depth) ?? 8
+        baseHeight = try c.decodeIfPresent(Double.self, forKey: .baseHeight) ?? 0
+        trussHeight = try c.decodeIfPresent(Double.self, forKey: .trussHeight) ?? 5
+        showTruss = try c.decodeIfPresent(Bool.self, forKey: .showTruss) ?? true
+        trussColorHex = try c.decodeIfPresent(String.self, forKey: .trussColorHex) ?? StageConfig.defaultTrussColorHex
+        beamShadows = try c.decodeIfPresent(Bool.self, forKey: .beamShadows) ?? true
+    }
 
     func clamped() -> StageConfig {
         var c = self
@@ -60,7 +84,7 @@ struct StageObject: Codable, Identifiable, Hashable {
     var colorHex: String = "#9A9A9A"
 }
 
-// MARK: - Scene salvate
+// MARK: - Camera
 
 /// Inquadratura della camera (pitch = elevazione in gradi sopra l'orizzonte).
 struct CameraSnapshot: Codable, Hashable {
@@ -69,16 +93,4 @@ struct CameraSnapshot: Codable, Hashable {
     var dist: Double
     var tx: Double
     var tz: Double
-}
-
-struct ScenePreset: Codable, Identifiable, Hashable {
-    var id = UUID()
-    var name: String
-    var date = Date()
-    var fixtures: [PatchedFixture]
-    var stage: StageConfig
-    var objects: [StageObject]
-    var net: Int
-    var subNet: Int
-    var camera: CameraSnapshot?
 }

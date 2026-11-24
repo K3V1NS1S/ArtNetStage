@@ -238,6 +238,20 @@ final class PatchManager: ObservableObject {
         library.removeAll { $0.id == id }
     }
 
+    /// Unisce i profili di un file di scena alla libreria: stesso id = versione del file, id nuovo = aggiunto.
+    /// I profili già presenti nell'app e assenti dal file restano dove sono.
+    func mergeLibrary(_ profiles: [FixtureProfile]) {
+        var copy = library
+        for p in profiles {
+            if let i = copy.firstIndex(where: { $0.id == p.id }) {
+                copy[i] = p
+            } else {
+                copy.append(p)
+            }
+        }
+        library = copy
+    }
+
     func restorePresets() {
         var copy = library
         for preset in FixturePresets.all {

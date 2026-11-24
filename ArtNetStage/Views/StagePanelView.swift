@@ -29,16 +29,27 @@ struct StagePanelView: View {
                 valueRow("Altezza base palco", $scene.stage.baseHeight, 0...3, step: 0.05, unit: "m")
                 valueRow("Altezza americane", $scene.stage.trussHeight, 2...15, step: 0.1, unit: "m")
                 Toggle("Mostra americane", isOn: $scene.stage.showTruss)
+                HStack(spacing: 8) {
+                    ColorPicker("Colore americane", selection: Binding(
+                        get: { Color(hex: scene.stage.trussColorHex) },
+                        set: { scene.stage.trussColorHex = $0.hexString }
+                    ), supportsOpacity: false)
+                    Button("Nero") { scene.stage.trussColorHex = "#151515" }
+                    Button("Alluminio") { scene.stage.trussColorHex = StageConfig.defaultTrussColorHex }
+                }
+                .controlSize(.small)
+                .disabled(!scene.stage.showTruss)
                 Toggle("Ombre dei fasci sugli oggetti", isOn: $scene.stage.beamShadows)
                 Text("Le luci a terra seguono l'altezza della base; quelle su americana restano agganciate quando cambi l'altezza o la profondità. La Y delle luci è misurata dal piano del palco.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Ripristina dimensioni standard") {
-                    let keep = (scene.stage.showTruss, scene.stage.beamShadows)
+                    // Ripristina solo le dimensioni: visibilità, colore e ombre restano come sono.
                     var s = StageConfig()
-                    s.showTruss = keep.0
-                    s.beamShadows = keep.1
+                    s.showTruss = scene.stage.showTruss
+                    s.trussColorHex = scene.stage.trussColorHex
+                    s.beamShadows = scene.stage.beamShadows
                     scene.stage = s
                 }
                 .controlSize(.small)

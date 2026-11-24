@@ -78,6 +78,8 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
     private var objectRenderers: [UUID: StageObjectRenderer] = [:]
     private var selectedID: UUID?
     private var lastTime: TimeInterval = 0
+    /// Materiali (dopo il flatten) di tutta la struttura delle americane: il colore si aggiorna qui senza ricostruire la geometria.
+    private var trussMaterials: [SCNMaterial] = []
 
     // MARK: - Init
 
@@ -282,8 +284,16 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         if let b = p.portBase { portBase = b }
 
         if let st = p.stage {
+            let old = stage
             stage = st
-            rebuildEnvironment()
+            let geometryChanged = old.width != st.width || old.depth != st.depth
+                || old.baseHeight != st.baseHeight || old.trussHeight != st.trussHeight
+                || old.showTruss != st.showTruss
+            if geometryChanged {
+                rebuildEnvironment()
+            } else if old.trussColorHex != st.trussColorHex {
+                applyTrussColor()          // aggiornamento in tempo reale del solo materiale
+            }
             for r in renderers.values { r.setStage(st) }
             for o in objectRenderers.values { o.update(o.object, deckY: st.baseHeight) }
         }
@@ -446,10 +456,18 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         }
 
         // Americane (presenti/assenti): lunghezza = larghezza del palco, altezza = base + altezza americana.
+        trussMaterials.removeAll()
         if st.showTruss {
             let ty = base + Float(st.trussHeight)
-            envRoot.addChildNode(makeTruss(length: w, y: ty, z: Float(st.frontTrussZ)))
-            envRoot.addChildNode(makeTruss(length: w, y: ty, z: Float(st.backTrussZ)))
+            for z in [Float(st.frontTrussZ), Float(st.backTrussZ)] {
+                let truss = makeTruss(length: w, y: ty, z: z)
+                envRoot.addChildNode(truss)
+                // Dopo flattenedClone i materiali sono quelli della geometria risultante: si raccolgono da lì.
+                truss.enumerateHierarchy { n, _ in
+                    if let g = n.geometry { self.trussMaterials.append(contentsOf: g.materials) }
+                }
+            }
+            applyTrussColor()
         }
 
         // Indicazione del lato pubblico (+Z).
@@ -458,12 +476,24 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         envRoot.enumerateHierarchy { n, _ in n.castsShadow = false }
     }
 
+    /// Applica `stage.trussColorHex` a tutta la struttura delle americane (`diffuse`), con un leggero
+    /// bagliore proprio (`emission`) perché il colore resti leggibile anche nel black-box buio.
+    private func applyTrussColor() {
+        let c = parseHex(stage.trussColorHex)
+        let diffuse = NSColor(srgbRed: CGFloat(c.x), green: CGFloat(c.y), blue: CGFloat(c.z), alpha: 1)
+        let glow = NSColor(srgbRed: CGFloat(c.x * 0.18), green: CGFloat(c.y * 0.18), blue: CGFloat(c.z * 0.18), alpha: 1)
+        for m in trussMaterials {
+            m.diffuse.contents = diffuse
+            m.emission.contents = glow
+        }
+    }
+
     /// Americana a sezione quadrata con tralicci verticali e due montanti fino a terra.
     private func makeTruss(length: Float, y: Float, z: Float) -> SCNNode {
         let root = SCNNode()
         let metal = SCNMaterial()
         metal.lightingModel = .blinn
-        metal.diffuse.contents = NSColor(white: 0.40, alpha: 1)
+        metal.diffuse.contents = NSColor(white: 0.66, alpha: 1)     // il colore reale arriva da applyTrussColor()
         metal.specular.contents = NSColor(white: 0.5, alpha: 1)
 
         let off: Float = 0.15

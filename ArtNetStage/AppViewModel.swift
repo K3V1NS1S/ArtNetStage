@@ -1,5 +1,7 @@
 import SwiftUI
+import AppKit
 import Combine
+import UniformTypeIdentifiers
 
 enum PanelSection: String, CaseIterable, Identifiable {
     case network = "Rete"
@@ -7,23 +9,28 @@ enum PanelSection: String, CaseIterable, Identifiable {
     case fixtures = "Fixture"
     case stage = "Palco"
     case monitor = "DMX"
-    case scenes = "Scene"
 
     var id: String { rawValue }
 }
 
-/// Coordinatore dell'applicazione (MVVM): possiede i servizi e li tiene sincronizzati.
+/// Coordinatore dell'applicazione (MVVM): possiede i servizi, li tiene sincronizzati
+/// e gestisce il salvataggio/apertura della scena come file `.artnetstage`.
 final class AppViewModel: ObservableObject {
     @Published var section: PanelSection = .network
+
+    /// File della scena corrente (nil = scena non ancora salvata).
+    @Published private(set) var currentFileURL: URL?
+    /// Ci sono modifiche non salvate rispetto al file (o alla scena iniziale).
+    @Published private(set) var isDirty = false
 
     let dmx: DMXStore
     let patch: PatchManager
     let server: ArtNetServer
     let stage: StageController
     let scene: SceneModel
-    let scenes: ScenePresetStore
 
     private var bag = Set<AnyCancellable>()
+    private var ignoreDirty = false
 
     init() {
         let dmx = DMXStore()
@@ -31,13 +38,11 @@ final class AppViewModel: ObservableObject {
         let server = ArtNetServer(dmx: dmx)
         let stage = StageController(dmx: dmx)
         let scene = SceneModel()
-        let scenes = ScenePresetStore()
         self.dmx = dmx
         self.patch = patch
         self.server = server
         self.stage = stage
         self.scene = scene
-        self.scenes = scenes
 
         // Le nuove luci nascono dentro le dimensioni attuali del palco.
         patch.stageProvider = { [weak scene] in scene?.stage ?? StageConfig() }
@@ -72,13 +77,49 @@ final class AppViewModel: ObservableObject {
             .sink { [weak stage] id in stage?.setSelection(id) }
             .store(in: &bag)
 
+        // Qualsiasi modifica a patch, palco o oggetti segna la scena come "modificata".
+        Publishers.MergeMany(
+            patch.$patched.map { _ in () }.eraseToAnyPublisher(),
+            scene.$stage.map { _ in () }.eraseToAnyPublisher(),
+            scene.$objects.map { _ in () }.eraseToAnyPublisher()
+        )
+        .sink { [weak self] in
+            guard let self, !self.ignoreDirty else { return }
+            self.isDirty = true
+        }
+        .store(in: &bag)
+
         server.start()
+        isDirty = false     // le emissioni iniziali dei publisher non sono modifiche dell'utente
     }
 
     private func apply(fixtures: [PatchedFixture], net: Int, subNet: Int) {
         let base = ((net & 0x7F) << 8) | ((subNet & 0x0F) << 4)
         stage.setFixtures(fixtures, portBase: base)
         server.setPatchedUniverses(Set(fixtures.map(\.universe)).sorted())
+    }
+
+    // MARK: - Titolo e informazioni
+
+    var fileDisplayName: String {
+        currentFileURL?.deletingPathExtension().lastPathComponent ?? "Senza titolo"
+    }
+
+    var windowTitle: String {
+        "\(AppInfo.name) — \(fileDisplayName)\(isDirty ? " — modificato" : "")"
+    }
+
+    func showAbout() {
+        let credits = NSAttributedString(
+            string: "Nodo Art-Net virtuale e visualizzatore 3D per testare show luci senza luci fisiche.\nFormato scene: .\(ProjectFileType.fileExtension)",
+            attributes: [.font: NSFont.systemFont(ofSize: 11)]
+        )
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: AppInfo.name,
+            .applicationVersion: AppInfo.version,
+            .version: AppInfo.build,
+            .credits: credits
+        ])
     }
 
     // MARK: - Selezione
@@ -94,43 +135,141 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Scene salvate
+    // MARK: - File di scena (.artnetstage)
 
-    @discardableResult
-    func saveScene(name: String, includeCamera: Bool) -> UUID {
-        scenes.save(
-            name: name,
-            fixtures: patch.patched,
-            stage: scene.stage,
-            objects: scene.objects,
+    /// Fotografia dell'intero stato del progetto.
+    func makeProject() -> ProjectFile {
+        ProjectFile(
+            format: ProjectFile.currentFormat,
+            appVersion: AppInfo.version,
+            savedAt: Date(),
+            nodeName: server.shortName,
             net: server.net,
             subNet: server.subNet,
-            camera: includeCamera ? stage.cameraSnapshot() : nil
+            stage: scene.stage,
+            fixtures: patch.patched,
+            library: patch.library,
+            objects: scene.objects,
+            camera: stage.cameraSnapshot()
         )
     }
 
-    func overwriteScene(_ id: UUID, includeCamera: Bool) {
-        scenes.update(
-            id: id,
-            fixtures: patch.patched,
-            stage: scene.stage,
-            objects: scene.objects,
-            net: server.net,
-            subNet: server.subNet,
-            camera: includeCamera ? stage.cameraSnapshot() : nil
-        )
+    /// Salva (⌘S): scrive nel file corrente, oppure apre "Salva con nome" se la scena non ha ancora un file.
+    func saveProject() {
+        if let url = currentFileURL {
+            write(to: url)
+        } else {
+            saveProjectAs()
+        }
     }
 
-    func loadScene(_ id: UUID) {
-        guard let s = scenes.presets.first(where: { $0.id == id }) else { return }
+    /// Salva con nome… (⇧⌘S) con il pannello nativo.
+    func saveProjectAs() {
+        let panel = NSSavePanel()
+        panel.title = "Salva scena"
+        panel.prompt = "Salva"
+        panel.allowedContentTypes = [ProjectFileType.utType]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.nameFieldStringValue = "\(currentFileURL == nil ? "Nuova scena" : fileDisplayName).\(ProjectFileType.fileExtension)"
+        if let dir = currentFileURL?.deletingLastPathComponent() { panel.directoryURL = dir }
+
+        guard panel.runModal() == .OK, var url = panel.url else { return }
+        if url.pathExtension.lowercased() != ProjectFileType.fileExtension {
+            url.appendPathExtension(ProjectFileType.fileExtension)
+        }
+        write(to: url)
+    }
+
+    /// Apri scena… (⌘O) con il pannello nativo.
+    func openProject() {
+        guard confirmDiscardChanges() else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Apri scena"
+        panel.prompt = "Apri"
+        panel.allowedContentTypes = [ProjectFileType.utType]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        load(url: url)
+    }
+
+    /// Apertura da Finder (doppio click su un file .artnetstage).
+    func open(url: URL) {
+        guard confirmDiscardChanges() else { return }
+        load(url: url)
+    }
+
+    private func write(to url: URL) {
+        do {
+            let data = try makeProject().encoded()
+            try data.write(to: url, options: .atomic)
+            currentFileURL = url
+            isDirty = false
+            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        } catch {
+            showError("Impossibile salvare la scena", detail: error.localizedDescription)
+        }
+    }
+
+    private func load(url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            let project = try ProjectFile.decode(from: data)
+            apply(project)
+            currentFileURL = url
+            isDirty = false
+            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        } catch {
+            showError("Impossibile aprire «\(url.lastPathComponent)»", detail: error.localizedDescription)
+        }
+    }
+
+    /// Sostituisce lo stato corrente con quello del file.
+    private func apply(_ p: ProjectFile) {
+        ignoreDirty = true
+        defer { ignoreDirty = false }
+
         scene.selectedEntityID = nil
-        // Le posizioni delle luci salvate sono già coerenti con il palco salvato: niente riancoraggio.
-        scene.setStageWithoutReanchor(s.stage)
-        scene.objects = s.objects
-        patch.replacePatch(with: s.fixtures)
-        server.net = s.net
-        server.subNet = s.subNet
-        if let c = s.camera { stage.applyCamera(c) }
+        // Le posizioni delle luci nel file sono già coerenti con il palco salvato: niente riancoraggio.
+        scene.setStageWithoutReanchor(p.stage)
+        scene.objects = p.objects
+        if let lib = p.library { patch.mergeLibrary(lib) }
+        patch.replacePatch(with: p.fixtures)
+        server.net = p.net
+        server.subNet = p.subNet
+        if let n = p.nodeName, !n.isEmpty { server.shortName = n }
+        if let c = p.camera { stage.applyCamera(c) }
+    }
+
+    /// Se ci sono modifiche non salvate chiede cosa fare. Restituisce `false` se l'operazione va annullata.
+    private func confirmDiscardChanges() -> Bool {
+        guard isDirty else { return true }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Salvare le modifiche alla scena «\(fileDisplayName)»?"
+        alert.informativeText = "Se non salvi, le modifiche andranno perse."
+        alert.addButton(withTitle: "Salva")
+        alert.addButton(withTitle: "Non salvare")
+        alert.addButton(withTitle: "Annulla")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            saveProject()
+            return !isDirty          // salvataggio annullato o fallito: si resta dove si è
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func showError(_ title: String, detail: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = detail
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     // MARK: - Test locale (senza software esterno)
