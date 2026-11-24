@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>ArtNet Stage</string>
+    <key>CFBundleDisplayName</key><string>ArtNet Stage</string>
+    <key>CFBundleIdentifier</key><string>local.artnetstage.app</string>
+    <key>CFBundleExecutable</key><string>ArtNetStage</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <!-- Versione 1.1 (in Xcode corrisponde a MARKETING_VERSION = 1.1 e CURRENT_PROJECT_VERSION = 2) -->
+    <key>CFBundleShortVersionString</key><string>1.1</string>
+    <key>CFBundleVersion</key><string>2</string>
+    <!-- Icona: build_app.sh converte AppIcon.png in Contents/Resources/AppIcon.icns -->
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>ArtNet Stage riceve pacchetti Art-Net/DMX dalla rete locale.</string>
+
+    <!-- File di scena .artnetstage: doppio click nel Finder apre l'app -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Scena ArtNet Stage</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
+            <key>LSHandlerRank</key><string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>local.artnetstage.project</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>local.artnetstage.project</string>
+            <key>UTTypeDescription</key><string>Scena ArtNet Stage</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.json</string>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>artnetstage</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>
