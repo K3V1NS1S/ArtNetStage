@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 /// Gestisce libreria fixture, patch (catena DMX), rilevamento conflitti e persistenza su disco.
+/// La selezione (fixture e oggetti) vive in `SceneModel.selectedEntityID`.
 final class PatchManager: ObservableObject {
 
     @Published var library: [FixtureProfile] = [] {
@@ -22,8 +23,10 @@ final class PatchManager: ObservableObject {
     }
 
     @Published private(set) var conflicts: Set<UUID> = []
-    @Published var selectedID: UUID?
     @Published var selectedProfileID: UUID?
+
+    /// Fornisce le dimensioni attuali del palco (impostato da `AppViewModel`).
+    var stageProvider: () -> StageConfig = { StageConfig() }
 
     private var isLoading = true
     private var saveWork: DispatchWorkItem?
@@ -77,13 +80,12 @@ final class PatchManager: ObservableObject {
             universe: min(max(universe, 0), 15),
             startAddress: min(max(address, 1), 512)
         )
-        let pl = Self.placement(for: profile.type, index: sameType)
+        let pl = placement(for: profile.type, index: sameType)
         f.x = pl.x
         f.y = pl.y
         f.z = pl.z
         f.mount = pl.mount
         patched.append(f)
-        selectedID = f.id
         return f.id
     }
 
@@ -120,7 +122,6 @@ final class PatchManager: ObservableObject {
 
     func remove(_ id: UUID) {
         patched.removeAll { $0.id == id }
-        if selectedID == id { selectedID = nil }
     }
 
     func move(from source: IndexSet, to destination: Int) {
@@ -129,15 +130,48 @@ final class PatchManager: ObservableObject {
         patched = copy
     }
 
-    private static func placement(for type: FixtureType, index n: Int) -> (x: Double, y: Double, z: Double, mount: MountOrientation) {
+    /// Sostituisce l'intera patch (caricamento di una scena salvata).
+    func replacePatch(with fixtures: [PatchedFixture]) {
+        patched = fixtures
+    }
+
+    // MARK: - Ancoraggio al palco
+
+    /// Quando cambiano altezza o profondità, le luci appese alle americane restano attaccate:
+    /// `y` è l'altezza sopra il piano del palco, quindi le luci a terra seguono da sole l'altezza della base,
+    /// mentre quelle su americana seguono l'altezza dell'americana (e lo spostamento di quella di fondo).
+    func reanchor(from old: StageConfig, to new: StageConfig) {
+        let dy = new.trussHeight - old.trussHeight
+        let backMoved = old.backTrussZ != new.backTrussZ
+        guard dy != 0 || backMoved else { return }
+        var copy = patched
+        var changed = false
+        for i in copy.indices where copy[i].mount == .truss {
+            if dy != 0 {
+                copy[i].y += dy
+                changed = true
+            }
+            if backMoved && abs(copy[i].z - old.backTrussZ) < 0.35 {
+                copy[i].z = new.backTrussZ
+                changed = true
+            }
+        }
+        if changed { patched = copy }
+    }
+
+    private func placement(for type: FixtureType, index n: Int) -> (x: Double, y: Double, z: Double, mount: MountOrientation) {
+        let st = stageProvider()
         switch type {
         case .movingHeadBeam, .movingHeadSpot:
             let row = n / 4
-            return (-4.5 + 3.0 * Double(n % 4), 4.8, row == 0 ? 0 : -3.5, .truss)
+            let step = min(3.0, st.width / 4)
+            return ((Double(n % 4) - 1.5) * step, st.trussHeight - 0.2, row == 0 ? st.frontTrussZ : st.backTrussZ, .truss)
         case .parLED:
-            return (-3.0 + 1.0 * Double(n % 7), 0, 3.0 - Double(n / 7), .floor)
+            let step = min(1.0, st.width / 8)
+            return ((Double(n % 7) - 3) * step, 0, st.depth / 2 - 1.0 - Double(n / 7), .floor)
         case .ledBar:
-            return (-3.0 + 3.0 * Double(n % 3), 0, -2.5 - 1.0 * Double(n / 3), .floor)
+            let step = min(3.0, st.width / 4)
+            return ((Double(n % 3) - 1) * step, 0, -st.depth / 2 + 1.5 + Double(n / 3), .floor)
         }
     }
 
@@ -288,7 +322,6 @@ final class PatchManager: ObservableObject {
         for _ in 0..<4 { addFixtureInSeries(FixturePresets.par) }
         for _ in 0..<4 { addFixtureInSeries(FixturePresets.mover) }
         addFixtureInSeries(FixturePresets.bar)
-        selectedID = nil
     }
 
     private func scheduleSave() {

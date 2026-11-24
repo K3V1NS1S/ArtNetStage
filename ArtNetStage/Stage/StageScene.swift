@@ -1,101 +1,270 @@
 import SceneKit
+import QuartzCore
 import AppKit
 import simd
 
 enum CameraPreset {
-    case front, top, threeQuarter
+    case front, side, top, threeQuarter
 }
 
-/// Possiede la scena SceneKit e il loop a 60 fps: ogni frame legge il buffer DMX e aggiorna le fixture.
-/// Tutte le modifiche al grafo di scena avvengono dentro `updateAtTime` (render thread);
-/// il main thread consegna solo dati tramite `lock`.
+/// Possiede la scena SceneKit, il rig camera e il loop a 60 fps.
+///
+/// Thread:
+/// - **main**: rig camera (nodi `pivot → pitch → camera`, animati con `SCNTransaction`), hitTest, API pubblica;
+/// - **render** (`updateAtTime`): aggiornamento di fixture, oggetti, palco e selezione.
+///   Il main thread consegna i dati al render thread tramite `pending` protetto da `lock`.
 final class StageController: NSObject, SCNSceneRendererDelegate {
 
+    // MARK: - Parametri del rig camera
+
+    /// Limite del nodo pitch (rotazione attorno a X): ±85°, per evitare il gimbal lock ai poli.
+    static let pitchLimit = 85.0
+    /// Con `false` la camera non scende mai sotto il piano del palco (il palco resta sempre in basso).
+    /// Con `true` è consentita tutta la corsa del pitch, fino a -85° (vista dal basso).
+    static let allowCameraBelowStage = false
+    /// Altezza (sopra il piano del palco) del punto attorno a cui orbita la camera.
+    static let lookHeight = 1.8
+    static let minDistance = 3.0
+    static let maxDistance = 60.0
+
+    // MARK: - Scena
+
     let scene = SCNScene()
+
+    /// Rig: `pivotNode` ruota in yaw (asse Y) e si sposta con il pan, `pitchNode` ruota in pitch (asse X),
+    /// `cameraNode` è figlio di `pitchNode` e si allontana lungo +Z (zoom). `allowsCameraControl` non è usato.
+    private let pivotNode = SCNNode()
+    private let pitchNode = SCNNode()
     let cameraNode = SCNNode()
+
+    private let envRoot = SCNNode()
     private let fixturesRoot = SCNNode()
+    private let objectsRoot = SCNNode()
+    private let labelNode = SCNNode()
+
     private let dmx: DMXStore
     private let lock = NSLock()
 
-    private var pendingFixtures: [PatchedFixture]?
-    private var pendingPortBase: Int?
-    private var portBase = 0
-    private var renderers: [UUID: FixtureRenderer] = [:]
-    private var lastTime: TimeInterval = 0
+    /// Chiamato (main thread) quando l'utente clicca nella vista 3D: UUID di fixture/oggetto oppure nil.
+    var onPick: ((UUID?) -> Void)?
 
-    private struct CamState {
-        var yaw: Double
-        var pitch: Double
-        var dist: Double
-        var tx: Double
-        var ty: Double
+    // MARK: - Stato lato main (camera)
+
+    private struct Rig {
+        var yaw: Double        // gradi, rotazione attorno all'asse Y
+        var pitch: Double      // gradi di elevazione sopra l'orizzonte (nodo pitch: eulerAngles.x = -pitch)
+        var dist: Double       // metri dal pivot
+        var tx: Double         // posizione del pivot sul piano del palco
         var tz: Double
     }
-    private var camGoal = CamState(yaw: 38, pitch: 20, dist: 20, tx: 0, ty: 2.2, tz: 0)
-    private var camCur = CamState(yaw: 38, pitch: 20, dist: 20, tx: 0, ty: 2.2, tz: 0)
+    private var rig = Rig(yaw: 38, pitch: 22, dist: 20, tx: 0, tz: 0)
+    private var uiStage = StageConfig()
+
+    // MARK: - Stato lato render
+
+    private struct Pending {
+        var fixtures: [PatchedFixture]?
+        var portBase: Int?
+        var stage: StageConfig?
+        var objects: [StageObject]?
+        var selectionChanged = false
+        var selection: UUID?
+    }
+    private var pending = Pending()
+
+    private var portBase = 0
+    private var stage = StageConfig()
+    private var renderers: [UUID: FixtureRenderer] = [:]
+    private var objectRenderers: [UUID: StageObjectRenderer] = [:]
+    private var selectedID: UUID?
+    private var lastTime: TimeInterval = 0
+
+    // MARK: - Init
 
     init(dmx: DMXStore) {
         self.dmx = dmx
         super.init()
-        buildEnvironment()
-        buildCamera()
+        buildStaticScene()
+        buildRig()
+        scene.rootNode.addChildNode(envRoot)
         scene.rootNode.addChildNode(fixturesRoot)
+        scene.rootNode.addChildNode(objectsRoot)
+        rebuildEnvironment()
+        applyRig(duration: 0)
     }
 
-    // MARK: - API (main thread)
+    // MARK: - API dati (main thread)
 
     func setFixtures(_ fixtures: [PatchedFixture], portBase: Int) {
         lock.lock()
-        pendingFixtures = fixtures
-        pendingPortBase = portBase
+        pending.fixtures = fixtures
+        pending.portBase = portBase
         lock.unlock()
     }
 
-    func setPreset(_ preset: CameraPreset) {
+    func setStage(_ s: StageConfig) {
         lock.lock()
-        defer { lock.unlock() }
-        var goal: CamState
-        switch preset {
-        case .front: goal = CamState(yaw: 0, pitch: 6, dist: 21, tx: 0, ty: 2.5, tz: 0)
-        case .top: goal = CamState(yaw: 0, pitch: 89, dist: 24, tx: 0, ty: 0, tz: 0)
-        case .threeQuarter: goal = CamState(yaw: 38, pitch: 20, dist: 20, tx: 0, ty: 2.2, tz: 0)
+        pending.stage = s
+        lock.unlock()
+        uiStage = s
+        applyRig(duration: 0.25)       // il pivot segue l'altezza del palco
+    }
+
+    func setObjects(_ objects: [StageObject]) {
+        lock.lock()
+        pending.objects = objects
+        lock.unlock()
+    }
+
+    func setSelection(_ id: UUID?) {
+        lock.lock()
+        pending.selectionChanged = true
+        pending.selection = id
+        lock.unlock()
+    }
+
+    // MARK: - Rig camera (main thread)
+
+    private func clamped(_ r: Rig) -> Rig {
+        var c = r
+        c.dist = min(max(c.dist, Self.minDistance), Self.maxDistance)
+
+        var minPitch = -Self.pitchLimit
+        if !Self.allowCameraBelowStage {
+            // La camera deve restare almeno 0.4 m sopra il piano del palco.
+            let pivotY = uiStage.baseHeight + Self.lookHeight
+            let minCamY = uiStage.baseHeight + 0.4
+            let s = min(max((minCamY - pivotY) / c.dist, -1), 1)
+            minPitch = max(minPitch, asin(s) * 180 / Double.pi)
         }
-        // Scegli la rotazione equivalente più vicina per non fare giri completi.
-        goal.yaw += 360 * ((camCur.yaw - goal.yaw) / 360).rounded()
-        camGoal = goal
+        c.pitch = min(max(c.pitch, minPitch), Self.pitchLimit)
+
+        let hx = uiStage.width / 2 + 10
+        let hz = uiStage.depth / 2 + 10
+        c.tx = min(max(c.tx, -hx), hx)
+        c.tz = min(max(c.tz, -hz), hz)
+        return c
     }
 
+    /// Scrive lo stato del rig sui nodi. Con `duration > 0` la transizione è animata da `SCNTransaction`.
+    private func applyRig(duration: TimeInterval,
+                          timing: CAMediaTimingFunctionName = .easeInEaseOut) {
+        rig = clamped(rig)
+        let r = rig
+        let toRad = Double.pi / 180
+
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = duration
+        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: timing)
+        pivotNode.position = SCNVector3(CGFloat(r.tx), CGFloat(uiStage.baseHeight + Self.lookHeight), CGFloat(r.tz))
+        pivotNode.eulerAngles = SCNVector3(0, CGFloat(r.yaw * toRad), 0)
+        pitchNode.eulerAngles = SCNVector3(CGFloat(-r.pitch * toRad), 0, 0)
+        cameraNode.position = SCNVector3(0, 0, CGFloat(r.dist))
+        SCNTransaction.commit()
+    }
+
+    /// Orbita: ruota attorno all'asse verticale e inclina entro i limiti del pitch.
     func orbit(dx: Double, dy: Double) {
-        lock.lock()
-        camGoal.yaw -= dx * 0.4
-        camGoal.pitch = min(max(camGoal.pitch + dy * 0.4, 2), 89)
-        lock.unlock()
+        rig.yaw -= dx * 0.4
+        rig.pitch += dy * 0.4
+        applyRig(duration: 0)
     }
 
+    /// Pan sul piano del palco: il punto guardato scorre sempre sul pavimento, mai in verticale.
     func pan(dx: Double, dy: Double) {
-        lock.lock()
-        let yaw = camGoal.yaw * Double.pi / 180
-        let s = camGoal.dist * 0.0016
-        camGoal.tx -= cos(yaw) * dx * s
-        camGoal.tz += sin(yaw) * dx * s
-        camGoal.ty = min(max(camGoal.ty + dy * s, -1), 12)
-        lock.unlock()
+        let yaw = rig.yaw * Double.pi / 180
+        let s = rig.dist * 0.0016
+        // destra dello schermo = (cos yaw, 0, -sin yaw); avanti sul pavimento = (-sin yaw, 0, -cos yaw)
+        rig.tx += (-cos(yaw) * dx - sin(yaw) * dy) * s
+        rig.tz += (sin(yaw) * dx - cos(yaw) * dy) * s
+        applyRig(duration: 0)
     }
 
+    /// Zoom: una breve transizione rende fluidi anche i singoli scatti della rotellina.
     func zoom(factor: Double) {
-        lock.lock()
-        camGoal.dist = min(max(camGoal.dist * factor, 3), 80)
-        lock.unlock()
+        rig.dist *= factor
+        applyRig(duration: 0.12, timing: .easeOut)
     }
 
-    // MARK: - Loop di rendering
+    private func fitDistance() -> Double {
+        max(uiStage.width, uiStage.depth * 1.4, 8) * 1.6
+    }
+
+    /// Anima la camera verso una vista preimpostata (SCNTransaction, 0.9 s).
+    func setPreset(_ preset: CameraPreset) {
+        let fit = fitDistance()
+        var goal: Rig
+        switch preset {
+        case .front:
+            goal = Rig(yaw: 0, pitch: 8, dist: fit, tx: 0, tz: 0)
+        case .side:
+            goal = Rig(yaw: 90, pitch: 8, dist: max(uiStage.depth * 2.4, uiStage.width * 0.9, 14), tx: 0, tz: 0)
+        case .top:
+            goal = Rig(yaw: 0, pitch: Self.pitchLimit, dist: fit * 1.05, tx: 0, tz: 0)
+        case .threeQuarter:
+            goal = Rig(yaw: 38, pitch: 22, dist: fit, tx: 0, tz: 0)
+        }
+        // Rotazione equivalente più vicina, per non fare giri completi.
+        goal.yaw += 360 * ((rig.yaw - goal.yaw) / 360).rounded()
+        rig = goal
+        applyRig(duration: 0.9)
+    }
+
+    func cameraSnapshot() -> CameraSnapshot {
+        CameraSnapshot(yaw: rig.yaw, pitch: rig.pitch, dist: rig.dist, tx: rig.tx, tz: rig.tz)
+    }
+
+    func applyCamera(_ s: CameraSnapshot) {
+        var goal = Rig(yaw: s.yaw, pitch: s.pitch, dist: s.dist, tx: s.tx, tz: s.tz)
+        goal.yaw += 360 * ((rig.yaw - goal.yaw) / 360).rounded()
+        rig = goal
+        applyRig(duration: 0.9)
+    }
+
+    // MARK: - Selezione dalla vista 3D (main thread)
+
+    /// hitTest sul punto cliccato: seleziona la fixture o l'oggetto più vicino alla camera.
+    /// Coni di luce, macchie a terra e contorni (nodi "ignore") vengono saltati.
+    func pick(at point: CGPoint, in view: SCNView) {
+        let options: [SCNHitTestOption: Any] = [
+            .searchMode: SCNHitTestSearchMode.all.rawValue,
+            .ignoreHiddenNodes: true
+        ]
+        let camPos = cameraNode.simdWorldPosition
+        let results = view.hitTest(point, options: options)
+        let sorted = results.sorted { a, b in
+            Self.distance(from: camPos, to: a.worldCoordinates) < Self.distance(from: camPos, to: b.worldCoordinates)
+        }
+        for hit in sorted {
+            if let id = entityID(for: hit.node) {
+                onPick?(id)
+                return
+            }
+        }
+        onPick?(nil)
+    }
+
+    private static func distance(from p: SIMD3<Float>, to v: SCNVector3) -> Float {
+        simd_distance(p, SIMD3<Float>(Float(v.x), Float(v.y), Float(v.z)))
+    }
+
+    private func entityID(for node: SCNNode) -> UUID? {
+        var current: SCNNode? = node
+        while let n = current {
+            if n.name == SceneHelpers.ignoreName { return nil }
+            if let name = n.name, let id = UUID(uuidString: name) { return id }
+            current = n.parent
+        }
+        return nil
+    }
+
+    // MARK: - Loop di rendering (render thread)
 
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
         let dt = lastTime == 0 ? 1.0 / 60.0 : min(max(time - lastTime, 0), 0.1)
         lastTime = time
 
         applyPending()
-        updateCamera(dt: dt)
 
         let snapshot = dmx.snapshot()
         for r in renderers.values {
@@ -106,61 +275,67 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
 
     private func applyPending() {
         lock.lock()
-        let fixtures = pendingFixtures
-        let base = pendingPortBase
-        pendingFixtures = nil
-        pendingPortBase = nil
+        let p = pending
+        pending = Pending()
         lock.unlock()
 
-        if let base { portBase = base }
-        guard let fixtures else { return }
+        if let b = p.portBase { portBase = b }
 
-        var newMap: [UUID: FixtureRenderer] = [:]
-        for f in fixtures {
-            if let existing = renderers[f.id], existing.signature == FixtureRenderer.signature(for: f) {
-                existing.updateFixture(f)
-                newMap[f.id] = existing
-            } else {
-                renderers[f.id]?.nodes.forEach { $0.removeFromParentNode() }
-                let r = FixtureRenderer(fixture: f)
-                r.nodes.forEach { fixturesRoot.addChildNode($0) }
-                newMap[f.id] = r
+        if let st = p.stage {
+            stage = st
+            rebuildEnvironment()
+            for r in renderers.values { r.setStage(st) }
+            for o in objectRenderers.values { o.update(o.object, deckY: st.baseHeight) }
+        }
+
+        if let fixtures = p.fixtures {
+            var newMap: [UUID: FixtureRenderer] = [:]
+            for f in fixtures {
+                if let existing = renderers[f.id], existing.signature == FixtureRenderer.signature(for: f) {
+                    existing.updateFixture(f)
+                    newMap[f.id] = existing
+                } else {
+                    renderers[f.id]?.nodes.forEach { $0.removeFromParentNode() }
+                    let r = FixtureRenderer(fixture: f, stage: stage)
+                    r.nodes.forEach { fixturesRoot.addChildNode($0) }
+                    newMap[f.id] = r
+                }
             }
+            for (id, r) in renderers where newMap[id] == nil {
+                r.nodes.forEach { $0.removeFromParentNode() }
+            }
+            renderers = newMap
         }
-        for (id, r) in renderers where newMap[id] == nil {
-            r.nodes.forEach { $0.removeFromParentNode() }
+
+        if let objects = p.objects {
+            var newMap: [UUID: StageObjectRenderer] = [:]
+            for o in objects {
+                if let existing = objectRenderers[o.id], existing.object.kind == o.kind {
+                    existing.update(o, deckY: stage.baseHeight)
+                    newMap[o.id] = existing
+                } else {
+                    objectRenderers[o.id]?.node.removeFromParentNode()
+                    let r = StageObjectRenderer(object: o, deckY: stage.baseHeight)
+                    objectsRoot.addChildNode(r.node)
+                    newMap[o.id] = r
+                }
+            }
+            for (id, r) in objectRenderers where newMap[id] == nil {
+                r.node.removeFromParentNode()
+            }
+            objectRenderers = newMap
         }
-        renderers = newMap
+
+        if p.selectionChanged { selectedID = p.selection }
+        if p.selectionChanged || p.fixtures != nil || p.objects != nil {
+            for (id, r) in renderers { r.setSelected(id == selectedID) }
+            for (id, r) in objectRenderers { r.setSelected(id == selectedID) }
+        }
     }
 
-    private func updateCamera(dt: Double) {
-        lock.lock()
-        let k = 1 - exp(-9 * dt)
-        camCur.yaw += (camGoal.yaw - camCur.yaw) * k
-        camCur.pitch += (camGoal.pitch - camCur.pitch) * k
-        camCur.dist += (camGoal.dist - camCur.dist) * k
-        camCur.tx += (camGoal.tx - camCur.tx) * k
-        camCur.ty += (camGoal.ty - camCur.ty) * k
-        camCur.tz += (camGoal.tz - camCur.tz) * k
-        let c = camCur
-        lock.unlock()
+    // MARK: - Costruzione scena
 
-        let yaw = c.yaw * Double.pi / 180
-        let pitch = c.pitch * Double.pi / 180
-        let cp = cos(pitch)
-        let target = SIMD3<Float>(Float(c.tx), Float(c.ty), Float(c.tz))
-        let pos = SIMD3<Float>(
-            Float(c.tx + c.dist * cp * sin(yaw)),
-            Float(c.ty + c.dist * sin(pitch)),
-            Float(c.tz + c.dist * cp * cos(yaw))
-        )
-        cameraNode.simdPosition = pos
-        cameraNode.simdLook(at: target)
-    }
-
-    // MARK: - Ambiente
-
-    private func buildCamera() {
+    private func buildRig() {
         let cam = SCNCamera()
         cam.fieldOfView = 48
         cam.zNear = 0.1
@@ -172,21 +347,17 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         cam.bloomThreshold = 0.55
         cam.bloomBlurRadius = 10
         cameraNode.camera = cam
-        scene.rootNode.addChildNode(cameraNode)
-        updateCamera(dt: 1.0 / 60.0)
+
+        scene.rootNode.addChildNode(pivotNode)
+        pivotNode.addChildNode(pitchNode)
+        pitchNode.addChildNode(cameraNode)
     }
 
-    private func constantMaterial(_ color: NSColor) -> SCNMaterial {
-        let m = SCNMaterial()
-        m.lightingModel = .constant
-        m.diffuse.contents = color
-        return m
-    }
-
-    private func buildEnvironment() {
+    /// Elementi che non dipendono dalle dimensioni del palco: sfondo, luce ambientale, suolo, scritta.
+    private func buildStaticScene() {
         scene.background.contents = NSColor(white: 0.012, alpha: 1)
 
-        // Luce ambientale molto debole: i corpi delle fixture restano appena visibili.
+        // Luce ambientale molto debole: corpi delle fixture e oggetti restano appena visibili.
         let ambient = SCNNode()
         ambient.light = SCNLight()
         ambient.light?.type = .ambient
@@ -194,57 +365,100 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         ambient.light?.color = NSColor(white: 0.3, alpha: 1)
         scene.rootNode.addChildNode(ambient)
 
-        // Pavimento "black box"
         let floor = SCNFloor()
         floor.reflectivity = 0
-        floor.materials = [constantMaterial(NSColor(white: 0.012, alpha: 1))]
-        scene.rootNode.addChildNode(SCNNode(geometry: floor))
+        floor.materials = [SceneHelpers.constantMaterial(NSColor(white: 0.012, alpha: 1))]
+        let floorNode = SCNNode(geometry: floor)
+        floorNode.castsShadow = false
+        scene.rootNode.addChildNode(floorNode)
 
-        // Pedana del palco 12 × 8 m
-        let deck = SCNNode(geometry: SCNBox(width: 12, height: 0.06, length: 8, chamferRadius: 0))
-        deck.geometry?.materials = [constantMaterial(NSColor(white: 0.035, alpha: 1))]
-        deck.simdPosition = [0, -0.028, 0]
-        scene.rootNode.addChildNode(deck)
-
-        // Griglia metrica (1 m, linee marcate ogni 5 m) e contorno del palco
-        var minor: [(SIMD3<Float>, SIMD3<Float>)] = []
-        var major: [(SIMD3<Float>, SIMD3<Float>)] = []
-        for x in -10...10 {
-            let seg = (SIMD3<Float>(Float(x), 0.006, -8), SIMD3<Float>(Float(x), 0.006, 10))
-            if x % 5 == 0 { major.append(seg) } else { minor.append(seg) }
-        }
-        for z in -8...10 {
-            let seg = (SIMD3<Float>(-10, 0.006, Float(z)), SIMD3<Float>(10, 0.006, Float(z)))
-            if z % 5 == 0 { major.append(seg) } else { minor.append(seg) }
-        }
-        scene.rootNode.addChildNode(SCNNode(geometry: Self.lineGeometry(minor, color: NSColor(white: 0.10, alpha: 1))))
-        scene.rootNode.addChildNode(SCNNode(geometry: Self.lineGeometry(major, color: NSColor(white: 0.24, alpha: 1))))
-
-        let outline: [(SIMD3<Float>, SIMD3<Float>)] = [
-            ([-6, 0.008, -4], [6, 0.008, -4]),
-            ([6, 0.008, -4], [6, 0.008, 4]),
-            ([6, 0.008, 4], [-6, 0.008, 4]),
-            ([-6, 0.008, 4], [-6, 0.008, -4])
-        ]
-        scene.rootNode.addChildNode(SCNNode(geometry: Self.lineGeometry(outline, color: NSColor(srgbRed: 0.1, green: 0.45, blue: 0.9, alpha: 1))))
-
-        // Due americane (truss) a 5 m di altezza
-        scene.rootNode.addChildNode(makeTruss(length: 12, y: 5.0, z: 0))
-        scene.rootNode.addChildNode(makeTruss(length: 12, y: 5.0, z: -3.5))
-
-        // Indicazione del lato pubblico (+Z)
         let text = SCNText(string: "PUBBLICO", extrusionDepth: 0.01)
         text.font = NSFont.systemFont(ofSize: 0.45, weight: .bold)
         text.flatness = 0.05
-        text.materials = [constantMaterial(NSColor(white: 0.22, alpha: 1))]
-        let textNode = SCNNode(geometry: text)
+        text.materials = [SceneHelpers.constantMaterial(NSColor(white: 0.22, alpha: 1))]
+        labelNode.geometry = text
         let (mn, mx) = text.boundingBox
-        textNode.pivot = SCNMatrix4MakeTranslation((mx.x + mn.x) / 2, (mx.y + mn.y) / 2, 0)
-        textNode.simdEulerAngles = SIMD3<Float>(-Float.pi / 2, 0, 0)
-        textNode.simdPosition = [0, 0.01, 5.3]
-        scene.rootNode.addChildNode(textNode)
+        labelNode.pivot = SCNMatrix4MakeTranslation((mx.x + mn.x) / 2, (mx.y + mn.y) / 2, 0)
+        labelNode.simdEulerAngles = SIMD3<Float>(-Float.pi / 2, 0, 0)
+        labelNode.castsShadow = false
+        scene.rootNode.addChildNode(labelNode)
     }
 
+    /// Ricostruisce pedana, griglia, contorno e americane in base a `stage`.
+    private func rebuildEnvironment() {
+        envRoot.childNodes.forEach { $0.removeFromParentNode() }
+
+        let st = stage
+        let w = Float(st.width)
+        let d = Float(st.depth)
+        let base = Float(st.baseHeight)
+
+        // Pedana: la faccia superiore sta a `baseHeight`.
+        let thickness = max(base, 0.05)
+        let box = SCNBox(width: CGFloat(w), height: CGFloat(thickness), length: CGFloat(d), chamferRadius: 0)
+        let side = SceneHelpers.constantMaterial(NSColor(white: 0.075, alpha: 1))
+        let top = SceneHelpers.constantMaterial(NSColor(white: 0.035, alpha: 1))
+        box.materials = [side, side, side, side, top, side]      // fronte, destra, retro, sinistra, sopra, sotto
+        let deck = SCNNode(geometry: box)
+        deck.simdPosition = SIMD3<Float>(0, base + 0.004 - thickness / 2, 0)
+        envRoot.addChildNode(deck)
+
+        // Griglia metrica sulla pedana (1 m, linee marcate ogni 5 m).
+        let gy = base + 0.008
+        var minor: [(SIMD3<Float>, SIMD3<Float>)] = []
+        var major: [(SIMD3<Float>, SIMD3<Float>)] = []
+        let xMax = Int((w / 2).rounded(.down))
+        let zMax = Int((d / 2).rounded(.down))
+        for x in -xMax...xMax {
+            let seg = (SIMD3<Float>(Float(x), gy, -d / 2), SIMD3<Float>(Float(x), gy, d / 2))
+            if x % 5 == 0 { major.append(seg) } else { minor.append(seg) }
+        }
+        for z in -zMax...zMax {
+            let seg = (SIMD3<Float>(-w / 2, gy, Float(z)), SIMD3<Float>(w / 2, gy, Float(z)))
+            if z % 5 == 0 { major.append(seg) } else { minor.append(seg) }
+        }
+        envRoot.addChildNode(SCNNode(geometry: SceneHelpers.lineGeometry(minor, color: NSColor(white: 0.10, alpha: 1))))
+        envRoot.addChildNode(SCNNode(geometry: SceneHelpers.lineGeometry(major, color: NSColor(white: 0.24, alpha: 1))))
+
+        // Contorno della pedana.
+        let oy = base + 0.010
+        let outline: [(SIMD3<Float>, SIMD3<Float>)] = [
+            (SIMD3<Float>(-w / 2, oy, -d / 2), SIMD3<Float>(w / 2, oy, -d / 2)),
+            (SIMD3<Float>(w / 2, oy, -d / 2), SIMD3<Float>(w / 2, oy, d / 2)),
+            (SIMD3<Float>(w / 2, oy, d / 2), SIMD3<Float>(-w / 2, oy, d / 2)),
+            (SIMD3<Float>(-w / 2, oy, d / 2), SIMD3<Float>(-w / 2, oy, -d / 2))
+        ]
+        envRoot.addChildNode(SCNNode(geometry: SceneHelpers.lineGeometry(
+            outline, color: NSColor(srgbRed: 0.1, green: 0.45, blue: 0.9, alpha: 1))))
+
+        // Griglia a terra attorno alla pedana (solo se la pedana è rialzata).
+        if base > 0.02 {
+            var ground: [(SIMD3<Float>, SIMD3<Float>)] = []
+            let ex = Int((w / 2).rounded(.up)) + 6
+            let ez = Int((d / 2).rounded(.up)) + 6
+            for x in stride(from: -ex, through: ex, by: 2) {
+                ground.append((SIMD3<Float>(Float(x), 0.004, -Float(ez)), SIMD3<Float>(Float(x), 0.004, Float(ez) + 2)))
+            }
+            for z in stride(from: -ez, through: ez + 2, by: 2) {
+                ground.append((SIMD3<Float>(-Float(ex), 0.004, Float(z)), SIMD3<Float>(Float(ex), 0.004, Float(z))))
+            }
+            envRoot.addChildNode(SCNNode(geometry: SceneHelpers.lineGeometry(ground, color: NSColor(white: 0.06, alpha: 1))))
+        }
+
+        // Americane (presenti/assenti): lunghezza = larghezza del palco, altezza = base + altezza americana.
+        if st.showTruss {
+            let ty = base + Float(st.trussHeight)
+            envRoot.addChildNode(makeTruss(length: w, y: ty, z: Float(st.frontTrussZ)))
+            envRoot.addChildNode(makeTruss(length: w, y: ty, z: Float(st.backTrussZ)))
+        }
+
+        // Indicazione del lato pubblico (+Z).
+        labelNode.simdPosition = SIMD3<Float>(0, 0.01, d / 2 + 1.3)
+
+        envRoot.enumerateHierarchy { n, _ in n.castsShadow = false }
+    }
+
+    /// Americana a sezione quadrata con tralicci verticali e due montanti fino a terra.
     private func makeTruss(length: Float, y: Float, z: Float) -> SCNNode {
         let root = SCNNode()
         let metal = SCNMaterial()
@@ -284,25 +498,7 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         }
 
         root.simdPosition = SIMD3<Float>(0, y, z)
-        return root
-    }
-
-    private static func lineGeometry(_ segments: [(SIMD3<Float>, SIMD3<Float>)], color: NSColor) -> SCNGeometry {
-        var verts: [SCNVector3] = []
-        var idx: [Int32] = []
-        for (a, b) in segments {
-            idx.append(Int32(verts.count))
-            verts.append(SCNVector3(CGFloat(a.x), CGFloat(a.y), CGFloat(a.z)))
-            idx.append(Int32(verts.count))
-            verts.append(SCNVector3(CGFloat(b.x), CGFloat(b.y), CGFloat(b.z)))
-        }
-        let src = SCNGeometrySource(vertices: verts)
-        let element = SCNGeometryElement(indices: idx, primitiveType: .line)
-        let g = SCNGeometry(sources: [src], elements: [element])
-        let m = SCNMaterial()
-        m.lightingModel = .constant
-        m.diffuse.contents = color
-        g.materials = [m]
-        return g
+        // Un'unica geometria per americana: una sola draw call anche con palchi larghi.
+        return root.flattenedClone()
     }
 }

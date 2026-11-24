@@ -7,9 +7,9 @@ struct ContentView: View {
     var body: some View {
         HSplitView {
             sidebar
-                .frame(minWidth: 430, idealWidth: 490, maxWidth: 840)
+                .frame(minWidth: 450, idealWidth: 500, maxWidth: 840)
             stageArea
-                .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 640, maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -19,7 +19,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             Picker("Sezione", selection: $vm.section) {
                 ForEach(PanelSection.allCases) { s in
-                    Label(s.rawValue, systemImage: s.icon).tag(s)
+                    Text(s.rawValue).tag(s)
                 }
             }
             .pickerStyle(.segmented)
@@ -33,7 +33,9 @@ struct ContentView: View {
                 case .network: NetworkPanelView()
                 case .patch: PatchView()
                 case .fixtures: FixtureBuilderView()
+                case .stage: StagePanelView()
                 case .monitor: DMXMonitorView()
+                case .scenes: ScenesPanelView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -53,7 +55,7 @@ struct ContentView: View {
                     cameraButtons
                 }
                 Spacer()
-                Text("Trascina: orbita · ⇧ o tasto destro: pan · rotellina / pizzico: zoom")
+                Text("Trascina: orbita · tasto destro o ⇧/⌥ + trascina: pan · rotellina / pizzico: zoom · click: seleziona")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .padding(6)
@@ -79,16 +81,20 @@ struct ContentView: View {
         .background(.ultraThinMaterial, in: Capsule())
     }
 
+    /// Toolbar delle viste: la camera si sposta con un'animazione (SCNTransaction).
     private var cameraButtons: some View {
         HStack(spacing: 6) {
             Button { vm.stage.setPreset(.front) } label: {
                 Label("Frontale", systemImage: "rectangle.portrait")
             }
+            Button { vm.stage.setPreset(.side) } label: {
+                Label("Laterale", systemImage: "sidebar.right")
+            }
             Button { vm.stage.setPreset(.top) } label: {
-                Label("Dall'alto", systemImage: "arrow.down.to.line")
+                Label("Superiore", systemImage: "arrow.down.to.line")
             }
             Button { vm.stage.setPreset(.threeQuarter) } label: {
-                Label("3/4 Palco", systemImage: "cube")
+                Label("3/4", systemImage: "cube")
             }
         }
         .buttonStyle(.bordered)

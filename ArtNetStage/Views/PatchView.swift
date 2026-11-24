@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PatchView: View {
     @EnvironmentObject var patch: PatchManager
+    @EnvironmentObject var scene: SceneModel
 
     @State private var newUniverse = 0
     @State private var newAddress = 1
@@ -26,7 +27,7 @@ struct PatchView: View {
                         ChainDiagramView(
                             fixtures: patch.patched,
                             conflicts: patch.conflicts,
-                            selection: $patch.selectedID
+                            selection: $scene.selectedEntityID
                         )
                     }
                 }
@@ -47,7 +48,7 @@ struct PatchView: View {
                 }
 
                 GroupBox(label: Label("Luci patchate (trascina per riordinare la catena)", systemImage: "list.bullet")) {
-                    List(selection: $patch.selectedID) {
+                    List(selection: $scene.selectedEntityID) {
                         ForEach(patch.patched) { f in
                             FixtureRow(fixture: f, conflict: patch.conflicts.contains(f.id))
                                 .tag(f.id)
@@ -99,12 +100,12 @@ struct PatchView: View {
 
     private func addManual() {
         guard let p = selectedProfile() else { return }
-        patch.addFixture(p, universe: newUniverse, address: newAddress)
+        scene.selectedEntityID = patch.addFixture(p, universe: newUniverse, address: newAddress)
     }
 
     private func addInSeries() {
         guard let p = selectedProfile() else { return }
-        patch.addFixtureInSeries(p)
+        scene.selectedEntityID = patch.addFixtureInSeries(p)
     }
 
     private var conflictBanner: some View {
@@ -124,12 +125,15 @@ struct PatchView: View {
 
     @ViewBuilder
     private var inspector: some View {
-        if let id = patch.selectedID, let binding = patch.fixtureBinding(id) {
+        if let id = scene.selectedEntityID, let binding = patch.fixtureBinding(id) {
             FixtureInspector(
                 fixture: binding,
                 conflict: patch.conflicts.contains(id),
                 onAutoPatch: { patch.autoPatch(id) },
-                onDelete: { patch.remove(id) }
+                onDelete: {
+                    patch.remove(id)
+                    if scene.selectedEntityID == id { scene.selectedEntityID = nil }
+                }
             )
         } else {
             Text("Seleziona una luce per modificarne indirizzo e posizione.")
@@ -364,10 +368,10 @@ struct FixtureInspector: View {
                 Divider()
 
                 // Posizione e montaggio
-                Text("Posizione sul palco (metri)").font(.caption).foregroundStyle(.secondary)
+                Text("Posizione sul palco (metri) — Y è l'altezza sopra il piano del palco").font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 10) {
                     numberField("X (sx/dx)", $fixture.x)
-                    numberField("Y (altezza)", $fixture.y)
+                    numberField("Y (alt. sul palco)", $fixture.y)
                     numberField("Z (verso pubblico)", $fixture.z)
                 }
                 Picker("Montaggio", selection: $fixture.mount) {

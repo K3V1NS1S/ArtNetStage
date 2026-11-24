@@ -105,6 +105,7 @@ final class BeamVisual {
             inner = nil
         }
 
+        node.name = SceneHelpers.ignoreName
         node.addChildNode(on)
         if let inner { node.addChildNode(inner) }
         node.isHidden = true
@@ -238,6 +239,7 @@ final class SpotVisual {
         let planeNode = SCNNode(geometry: plane)
         planeNode.simdEulerAngles = SIMD3<Float>(-Float.pi / 2, 0, 0)   // sdraiato sul pavimento
         planeNode.renderingOrder = 90
+        node.name = SceneHelpers.ignoreName
         node.addChildNode(planeNode)
         node.isHidden = true
     }
@@ -265,9 +267,10 @@ final class SpotVisual {
 
 final class FixtureRenderer {
     private(set) var fixture: PatchedFixture
+    private var stage: StageConfig
     let signature: Int
 
-    /// Nodo con posizione/yaw della luce nel mondo.
+    /// Nodo con posizione/yaw della luce nel mondo. Il nome è l'UUID della fixture (usato dal hitTest).
     let node = SCNNode()
     /// La macchia sul pavimento vive in coordinate mondo, quindi in un nodo separato.
     let spotNode = SCNNode()
@@ -284,6 +287,16 @@ final class FixtureRenderer {
     private var lensMat: SCNMaterial?
     private var lastLensKey: UInt32 = .max
     private var spot: SpotVisual?
+    private var selectionBox: SCNNode?
+
+    // Luce reale (SCNLight spot): illumina oggetti e manichini.
+    private var lightNode: SCNNode?
+    private var lastLightKey: UInt32 = .max
+    private var lastLightIntensity: Float = -1
+    private var lightGain: Float = 1400
+
+    /// Se la zona illuminata non coincide con il cono visibile, regola questo fattore.
+    private static let lightConeScale = 1.0
 
     private var curPan = 0.0
     private var curTilt = 0.0
@@ -301,8 +314,9 @@ final class FixtureRenderer {
         return h.finalize()
     }
 
-    init(fixture: PatchedFixture) {
+    init(fixture: PatchedFixture, stage: StageConfig) {
         self.fixture = fixture
+        self.stage = stage
         self.signature = FixtureRenderer.signature(for: fixture)
         self.map = ChannelMap(profile: fixture.profile)
         build()
@@ -313,15 +327,29 @@ final class FixtureRenderer {
         applyPlacement()
     }
 
+    func setStage(_ s: StageConfig) {
+        stage = s
+        applyPlacement()
+        lightNode?.light?.castsShadow = s.beamShadows
+    }
+
+    func setSelected(_ selected: Bool) {
+        selectionBox?.isHidden = !selected
+    }
+
     // MARK: Costruzione
 
     private func build() {
         let body = Self.flatMaterial(white: 0.09)
         let trim = Self.flatMaterial(white: 0.22)
 
+        node.name = fixture.id.uuidString
         node.addChildNode(mountNode)
         mountNode.addChildNode(panNode)
         panNode.addChildNode(tiltNode)
+
+        let selSize: SIMD3<Float>
+        let selCenter: SIMD3<Float>
 
         switch fixture.profile.type {
         case .movingHeadBeam, .movingHeadSpot:
@@ -337,9 +365,12 @@ final class FixtureRenderer {
             tiltNode.addChildNode(shape(SCNCylinder(radius: 0.11, height: 0.30), body, at: [0, 0.10, 0]))
             addLens(radius: 0.085, at: lensDistance)
             addBeam(core: true, at: [0, lensDistance + 0.005, 0])
+            addLight(outerAngle: fixture.profile.beamAngle, at: [0, lensDistance + 0.02, 0], range: maxBeamLength)
             let s = SpotVisual()
             spot = s
             spotNode.addChildNode(s.node)
+            selSize = [0.42, 0.62, 0.36]
+            selCenter = [0, 0.30, 0]
 
         case .parLED:
             pivotHeight = 0.12
@@ -354,9 +385,12 @@ final class FixtureRenderer {
             tiltNode.addChildNode(shape(SCNCylinder(radius: 0.085, height: 0.20), body, at: [0, 0.07, 0]))
             addLens(radius: 0.07, at: lensDistance)
             addBeam(core: true, at: [0, lensDistance + 0.005, 0])
+            addLight(outerAngle: fixture.profile.beamAngle, at: [0, lensDistance + 0.02, 0], range: maxBeamLength)
             let s = SpotVisual()
             spot = s
             spotNode.addChildNode(s.node)
+            selSize = [0.30, 0.36, 0.26]
+            selCenter = [0, 0.14, 0]
 
         case .ledBar:
             let n = max(1, fixture.profile.pixelConfig?.count ?? 1)
@@ -382,7 +416,18 @@ final class FixtureRenderer {
                 addBeam(core: false, at: [x, lensDistance, 0])
             }
             pixelKeys = Array(repeating: UInt32.max, count: n)
+            // Una sola luce per tutta la barra, con il colore medio dei pixel.
+            addLight(outerAngle: fixture.profile.beamAngle + 20, at: [0, 0.07, 0], range: maxBeamLength)
+            selSize = [pitch * Float(n) + 0.12, 0.16, 0.14]
+            selCenter = [0, 0.05, 0]
         }
+
+        // I corpi delle fixture NON proiettano ombra: la luce nasce dentro di loro e si auto-oscurerebbe.
+        node.enumerateHierarchy { n, _ in n.castsShadow = false }
+
+        let box = SceneHelpers.wireBox(size: selSize, center: selCenter)
+        mountNode.addChildNode(box)
+        selectionBox = box
 
         applyPlacement()
     }
@@ -413,6 +458,38 @@ final class FixtureRenderer {
         beams.append(b)
     }
 
+    /// SCNLight di tipo spot lungo l'asse del fascio (+Y locale). La luce spot punta verso -Z,
+    /// quindi il nodo viene ruotato di +90° attorno a X.
+    private func addLight(outerAngle: Double, at position: SIMD3<Float>, range: Double) {
+        let light = SCNLight()
+        light.type = .spot
+        light.color = NSColor.white
+        light.intensity = 0
+        let outer = CGFloat(min(max(outerAngle * Self.lightConeScale, 4), 120))
+        light.spotOuterAngle = outer
+        light.spotInnerAngle = outer * 0.6
+        light.attenuationStartDistance = 1
+        light.attenuationEndDistance = CGFloat(range * 1.3)
+        light.attenuationFalloffExponent = 1
+        light.zNear = 0.2
+        light.zFar = CGFloat(range * 1.3)
+        light.castsShadow = stage.beamShadows
+        light.shadowRadius = 3
+        light.shadowSampleCount = 8
+        light.shadowColor = NSColor(white: 0, alpha: 0.65)
+        light.shadowMapSize = CGSize(width: 1024, height: 1024)
+
+        let n = SCNNode()
+        n.light = light
+        n.simdPosition = position
+        n.simdEulerAngles = SIMD3<Float>(Float.pi / 2, 0, 0)
+        tiltNode.addChildNode(n)
+        lightNode = n
+
+        // I fasci stretti concentrano più luce: guadagno maggiore con angoli piccoli.
+        lightGain = 1400 * Float(min(4, max(1, 28 / max(fixture.profile.beamAngle, 1))))
+    }
+
     private static func flatMaterial(white: CGFloat) -> SCNMaterial {
         let m = SCNMaterial()
         m.lightingModel = .blinn
@@ -433,8 +510,13 @@ final class FixtureRenderer {
         }
     }
 
+    /// `y` della fixture è l'altezza sopra il piano del palco: l'altezza della base si somma qui.
+    private var worldBase: SIMD3<Float> {
+        SIMD3<Float>(Float(fixture.x), Float(stage.baseHeight + fixture.y), Float(fixture.z))
+    }
+
     private func applyPlacement() {
-        node.simdPosition = SIMD3<Float>(Float(fixture.x), Float(fixture.y), Float(fixture.z))
+        node.simdPosition = worldBase
         node.simdEulerAngles = SIMD3<Float>(0, Self.rad(fixture.yaw), 0)
         mountNode.simdOrientation = Self.mountQuat(fixture.mount)
     }
@@ -446,6 +528,23 @@ final class FixtureRenderer {
         let eased = delta * min(1, 14 * dt)        // smorzamento esponenziale
         let maxStep = speed * dt                   // limite di velocità dei motori
         return cur + max(-maxStep, min(maxStep, eased))
+    }
+
+    /// Punto in cui il fascio incontra il piano del palco (se dentro la pedana) oppure il suolo.
+    private func floorHit(origin: SIMD3<Float>, dir: SIMD3<Float>) -> (t: Float, y: Float)? {
+        guard dir.y < -0.01 else { return nil }
+        let deckY = Float(stage.baseHeight)
+        let hw = Float(stage.width) / 2
+        let hd = Float(stage.depth) / 2
+        if origin.y > deckY {
+            let t = (origin.y - deckY) / -dir.y
+            let p = origin + dir * t
+            if abs(p.x) <= hw && abs(p.z) <= hd { return (t, deckY) }
+        }
+        if origin.y > 0.001 {
+            return (origin.y / -dir.y, 0)
+        }
+        return nil
     }
 
     func update(data: [UInt8]?, dt: Double, time: Double) {
@@ -524,18 +623,14 @@ final class FixtureRenderer {
             * simd_quatf(angle: Self.rad(panDeg), axis: [0, 1, 0])
             * simd_quatf(angle: Self.rad(tiltDeg), axis: [1, 0, 0])
         let dir = headQ.act(SIMD3<Float>(0, 1, 0))
-        let basePos = SIMD3<Float>(Float(fixture.x), Float(fixture.y), Float(fixture.z))
-        let origin = basePos + placeQ.act(SIMD3<Float>(0, pivotHeight, 0)) + dir * lensDistance
+        let origin = worldBase + placeQ.act(SIMD3<Float>(0, pivotHeight, 0)) + dir * lensDistance
 
         let half = fixture.profile.beamAngle / 2
         var length = maxBeamLength
-        var hitT: Float? = nil
-        if dir.y < -0.01 {
-            let t = -origin.y / dir.y
-            if t > 0.05 && Double(t) < maxBeamLength {
-                length = Double(t)
-                hitT = t
-            }
+        var hit: (t: Float, y: Float)? = nil
+        if let h = floorHit(origin: origin, dir: dir), h.t > 0.05, Double(h.t) < maxBeamLength {
+            length = Double(h.t)
+            hit = h
         }
 
         if fixture.profile.type == .ledBar {
@@ -544,6 +639,7 @@ final class FixtureRenderer {
         }
 
         beams.first?.update(color: color, intensity: intensity, halfAngleDeg: half, length: length)
+        updateLight(color: color, level: intensity)
 
         if let lm = lensMat {
             let lv = SIMD3<Float>(repeating: 0.1) + color * intensity * 0.9
@@ -555,13 +651,13 @@ final class FixtureRenderer {
         }
 
         if let spot {
-            if let t = hitT {
-                let hit = origin + dir * t
-                let diameter = Float(2 * Double(t) * tan(half * Double.pi / 180)) + 0.12
+            if let h = hit {
+                let p = origin + dir * h.t
+                let diameter = Float(2 * Double(h.t) * tan(half * Double.pi / 180)) + 0.12
                 let stretch = min(1 / max(abs(dir.y), 0.12), 8)
-                let falloff = 1 / (1 + 0.05 * t)
+                let falloff = 1 / (1 + 0.05 * h.t)
                 spot.update(
-                    position: SIMD3<Float>(hit.x, 0.012, hit.z),
+                    position: SIMD3<Float>(p.x, h.y + 0.012, p.z),
                     yaw: atan2f(dir.x, dir.z),
                     diameter: diameter,
                     stretch: stretch,
@@ -573,8 +669,23 @@ final class FixtureRenderer {
         }
     }
 
+    private func updateLight(color: SIMD3<Float>, level: Float) {
+        guard let light = lightNode?.light else { return }
+        let target = level * lightGain
+        let key = colorKey(color)
+        if key != lastLightKey {
+            lastLightKey = key
+            light.color = nsColor(color)
+        }
+        if abs(target - lastLightIntensity) > 2 || ((target == 0) != (lastLightIntensity == 0)) {
+            lastLightIntensity = target
+            light.intensity = CGFloat(target)
+        }
+    }
+
     private func updatePixels(ch: (Int?) -> Int?, intensity: Float, half: Double, length: Double) {
         let pc = fixture.profile.pixelConfig
+        var acc = SIMD3<Float>(repeating: 0)
         for i in 0..<beams.count {
             var r: Float = 0, g: Float = 0, b: Float = 0, w: Float = 0
             if let pc {
@@ -595,6 +706,7 @@ final class FixtureRenderer {
                 w = Float(ch(map.white) ?? 0) / 255
             }
             let c = simd_min(SIMD3<Float>(r + w, g + w, b + w), SIMD3<Float>(repeating: 1)) * intensity
+            acc += c
             beams[i].update(color: c, intensity: 1, halfAngleDeg: half, length: length)
 
             if i < pixelMats.count {
@@ -606,5 +718,10 @@ final class FixtureRenderer {
                 }
             }
         }
+
+        let avg = acc / Float(max(beams.count, 1))
+        let level = max(avg.x, max(avg.y, avg.z))
+        let lightColor = level > 0.001 ? avg / level : SIMD3<Float>(1, 1, 1)
+        updateLight(color: lightColor, level: level)
     }
 }
