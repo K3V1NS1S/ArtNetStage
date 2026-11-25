@@ -1,4 +1,4 @@
-# ArtNet Stage 1.5 — nodo Art-Net virtuale + visualizzatore 3D per macOS
+# ArtNet Stage 2.0 — nodo Art-Net virtuale + visualizzatore 3D per macOS
 
 App nativa **macOS 13+** (Swift 5.9, SwiftUI MVVM, SceneKit, BSD sockets) che si comporta come una centralina Art-Net
 collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey & co. inviano.
@@ -12,7 +12,7 @@ collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey &
 ArtNetStage/
 ├── ArtNetStageApp.swift        @main, finestra e iniezione degli environment object
 ├── AppViewModel.swift          coordinatore MVVM: server ↔ patch ↔ scena 3D ↔ palco/oggetti/scene salvate
-├── ContentView.swift           UI: pannello a sezioni (Rete/Patch/Fixture/Palco/DMX) + stage 3D, toolbar viste e toolbar file
+├── ContentView.swift           UI: scena 3D a tutta finestra + pannello in vetro a sezioni (Rete/Collegamenti/Luci/Palco/DMX), pillola viste, luminosità
 ├── ArtNetStage.entitlements    App Sandbox DISABILITATO
 ├── Models/
 │   ├── FixtureModels.swift     FixtureProfile, ChannelRole, ColorWheelSlot, PixelConfig, PatchedFixture
@@ -75,7 +75,7 @@ Le scene non sono più preset interni: si salvano e si aprono come file veri sul
 
 ## Novità della 1.2 — ottica delle fixture
 
-Tutto si configura nel pannello **Fixture** (Fixture Builder) e vale per le luci già patchate con quel profilo.
+Tutto si configura nel pannello **Luci** (Fixture Builder) e vale per le luci già patchate con quel profilo.
 
 **Modalità colore** (sezione «Colore del fascio»): `Ruota Colori`, `RGB` o `RGBW`.
 * *RGB / RGBW:* il colore segue direttamente i canali (nessuna transizione). In RGBW il bianco si somma a R, G, B.
@@ -102,6 +102,21 @@ Il lampeggio è integrato sull'intervallo di ogni frame: a frequenze vicine al r
 **File:** il formato `.artnetstage` passa alla versione 2. La 1.2 apre ancora i file della 1.1; la 1.1 rifiuta quelli della 1.2 con un messaggio chiaro.
 Il preset «Moving Head Beam 12ch» ora usa i ruoli `Gobo` e `Prisma` e la modalità ruota; se avevi già una libreria salvata dalla 1.1 i due canali vengono promossi in automatico.
 Gobo e prisma non si applicano alle barre LED multi-pixel.
+
+## Novità della 2.0 — nuova interfaccia
+
+Solo grafica: rendering 3D, motore Art-Net, Gumball, file `.artnetstage` e generazione dell'icona sono invariati.
+
+* **Finestra unificata.** Niente barra del titolo: la scena 3D occupa tutta la finestra e il pannello dei controlli è una lastra di vetro
+  satinato traslucido (`NSVisualEffectView`) appoggiata sopra. Apri/Salva/Salva con nome sono nell'intestazione del pannello
+  (restano anche nel menu File con ⌘O, ⌘S, ⇧⌘S). La finestra si sposta trascinando l'intestazione.
+* **Ridimensionamento.** Trascina la maniglia sottile sul bordo destro del pannello (si illumina al passaggio del mouse); la larghezza viene ricordata.
+* **Vetro su tutta la UI.** Badge Art-Net, pillola delle viste, pannello Luminosità e suggerimenti usano lo stesso vetro (angoli continui, bordo bianco al 12%, ombre morbide).
+* **Schede.** «Patch» diventa **Collegamenti** e «Fixture» diventa **Luci**. La barra a pillole (animata) assegna a ogni scheda un colore:
+  Rete ciano/blu, Collegamenti verde smeraldo/acquamarina, Luci magenta/viola, Palco ambra/arancio, DMX indaco.
+  Il colore tinge il vetro del pannello, le card, i pulsanti, le selezioni e gli slider.
+* **Card e controlli.** Ogni riquadro è una card in vetro (`cornerRadius: 14`, continuo); pulsanti e campi numerici hanno uno stile dedicato con cifre tabulari.
+* Il nuovo `Theme.swift` raccoglie colori delle sezioni, vetro, stili e maniglia.
 
 ## Novità della 1.5
 
@@ -162,10 +177,10 @@ La 1.3 apre ancora i formati 1 e 2; le versioni precedenti rifiutano i file di f
 
 ## Versione
 
-La versione è **1.5** (build 6): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
+La versione è **2.0** (build 7): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
 Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.3** e **Build = 4**
-(equivale a `MARKETING_VERSION = 1.5`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
-Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 1.5` e `CFBundleVersion = 6`
+(equivale a `MARKETING_VERSION = 2.0`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
+Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.0` e `CFBundleVersion = 7`
 (le variabili `APP_VERSION` e `APP_BUILD` in cima allo script: cambiale insieme a `AppInfo` quando alzi la versione).
 
 ## Icona dell'app
@@ -212,7 +227,7 @@ locale sono già gestite (resta solo da consentire l'accesso alla prima esecuzio
 3. Lascia *Hardened Runtime* attivo se vuoi, non interferisce.
 
 ### 3. Info.plist, versione e permesso rete locale
-**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 1.5, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
+**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 2.0, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
 In alternativa aggiungi a mano le chiavi nella scheda **Info** del target. Alla prima esecuzione consenti l'accesso alla rete locale.
 
 ### 4. Primo avvio
