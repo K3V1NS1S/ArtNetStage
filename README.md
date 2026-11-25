@@ -1,4 +1,4 @@
-# ArtNet Stage 2.1 — nodo Art-Net virtuale + visualizzatore 3D per macOS
+# ArtNet Stage 2.2 — nodo Art-Net virtuale + visualizzatore 3D per macOS
 
 App nativa **macOS 13+** (Swift 5.9, SwiftUI MVVM, SceneKit, BSD sockets) che si comporta come una centralina Art-Net
 collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey & co. inviano.
@@ -103,6 +103,22 @@ Il lampeggio è integrato sull'intervallo di ogni frame: a frequenze vicine al r
 Il preset «Moving Head Beam 12ch» ora usa i ruoli `Gobo` e `Prisma` e la modalità ruota; se avevi già una libreria salvata dalla 1.1 i due canali vengono promossi in automatico.
 Gobo e prisma non si applicano alle barre LED multi-pixel.
 
+## Novità della 2.2
+
+* **Pubblico rimosso.** La folla della 2.1 (e la figura fantasma al centro del palco) non c'è più, né nella scena né nella scheda Palco né nei dati salvati.
+  I file `.artnetstage` salvati con la 2.1 si aprono normalmente: la chiave `showCrowd` viene ignorata.
+* **Barra delle viste.** I pulsanti Frontale, Laterale, Superiore, 3/4 e Manichino hanno larghezza naturale su una sola riga (`fixedSize` + `lineLimit(1)`):
+  non si comprimono più quando compare la vista Manichino. Selettore del manichino e slider FOV stanno su una seconda riga sotto la pillola.
+* **Manichino con faccia.** La testa ha una visiera scura e un naso arancione sul lato frontale. Con rotazione Y = 0 il manichino guarda **verso il pubblico**
+  (lato +Z, dove c'è la scritta «PUBBLICO»); ruotandolo con il Gumball o con il campo Yaw la faccia segue.
+* **Vista Manichino (POV) corretta.** La camera sta all'altezza degli occhi, davanti alla faccia, e guarda esattamente dove guarda il manichino
+  (di default verso il pubblico), seguendo le sue rotazioni anche in tempo reale. Trascinando nella vista ci si guarda intorno.
+* **Annulla / Ripristina.** ⌘Z e ⇧⌘Z (menu Modifica ▸ Annulla / Ripristina) su: posizione, rotazione e dimensioni di fixture e oggetti (campi numerici e
+  trascinamento del Gumball: un passo per trascinamento, chiuso al rilascio del mouse), aggiunta / eliminazione / duplicazione di luci, stativi e oggetti,
+  profili (canali DMX, ruota colori, gobo, prisma, strobo), palco (misure, colori di americane e piano, luminosità), luminosità di scena e luci, Net/SubNet.
+  Le raffiche di modifiche (slider, digitazione) si fondono in un solo passo. Con il cursore in un campo di testo, ⌘Z annulla prima la digitazione.
+  Aprire un file azzera la cronologia (fino a 200 passi, non salvati nel file). Non sono annullabili le azioni di sistema (alias IP) e i valori DMX di prova.
+
 ## Novità della 2.1
 
 * **Sfondo unico a tutta finestra.** Un solo sfondo continuo, scuro e atmosferico, tinto dal colore della sezione (Rete, Catena, Luci, Palco, DMX).
@@ -117,9 +133,7 @@ Gobo e prisma non si applicano alle barre LED multi-pixel.
   selezionato (o del primo) guardando nella sua direzione frontale (−Z ruotato dallo yaw: per default verso il palco). Trascina per guardarti intorno;
   se ci sono più manichini compare un menu per sceglierli; lo slider **Campo visivo** va da 35° (tele) a 110° (grandangolo) e agisce in tempo reale su `SCNCamera.fieldOfView`
   (orizzontale). Se sposti o ruoti il manichino con il Gumball, la vista lo segue. In POV pan e zoom sono disattivati.
-* **Folla.** Quattro file di spettatori stilizzati (corpo + testa, altezze, posizioni e orientamenti leggermente variati, sempre uguali a ogni avvio) oltre la scritta «PUBBLICO».
-  Geometrie e materiali sono condivisi e l'intera folla è appiattita in pochi draw call, senza ombre proprie; i materiali sono illuminati dalle luci delle fixture.
-  La folla non occlude i fasci e non è selezionabile. Il toggle «Mostra la folla davanti al palco» è nella scheda Palco e viene salvato nel file `.artnetstage` (i file precedenti si aprono con la folla visibile).
+* **Folla** (rimossa nella 2.2, vedi sotto).
 
 ## Novità della 2.0 — nuova interfaccia
 
@@ -195,10 +209,10 @@ La 1.3 apre ancora i formati 1 e 2; le versioni precedenti rifiutano i file di f
 
 ## Versione
 
-La versione è **2.1** (build 8): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
+La versione è **2.2** (build 9): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
 Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.3** e **Build = 4**
-(equivale a `MARKETING_VERSION = 2.1`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
-Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.1` e `CFBundleVersion = 8`
+(equivale a `MARKETING_VERSION = 2.2`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
+Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.2` e `CFBundleVersion = 9`
 (le variabili `APP_VERSION` e `APP_BUILD` in cima allo script: cambiale insieme a `AppInfo` quando alzi la versione).
 
 ## Icona dell'app
@@ -245,7 +259,7 @@ locale sono già gestite (resta solo da consentire l'accesso alla prima esecuzio
 3. Lascia *Hardened Runtime* attivo se vuoi, non interferisce.
 
 ### 3. Info.plist, versione e permesso rete locale
-**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 2.1, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
+**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 2.2, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
 In alternativa aggiungi a mano le chiavi nella scheda **Info** del target. Alla prima esecuzione consenti l'accesso alla rete locale.
 
 ### 4. Primo avvio
