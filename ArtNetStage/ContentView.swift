@@ -20,7 +20,7 @@ struct ContentView: View {
     @State private var fov: Double = 75
 
     private static let minPanelWidth: CGFloat = 420
-    private static let minViewportWidth: CGFloat = 640
+    private static let minViewportWidth: CGFloat = 700
 
     private var theme: SectionTheme { vm.section.theme }
     private var mannequins: [StageObject] { scene.objects.filter { $0.kind == .mannequin } }
@@ -120,9 +120,10 @@ struct ContentView: View {
     private var footer: some View {
         HStack(spacing: 6) {
             Image(systemName: "doc")
-            Text(vm.fileDisplayName + (vm.isDirty ? " •" : ""))
+            Text(vm.fileDisplayName)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            statusBadge
             Spacer()
             Text("\(AppInfo.name) \(AppInfo.version)")
                 .monospacedDigit()
@@ -131,6 +132,28 @@ struct ContentView: View {
         .foregroundStyle(.white.opacity(0.55))
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+    }
+
+    /// Stato del file, sempre scritto in testo accanto al nome: «Modificato» se `hasUnsavedChanges == true`,
+    /// «Salvato» altrimenti (anche per «Senza titolo» ancora intatto).
+    private var statusBadge: some View {
+        badge(vm.hasUnsavedChanges ? "Modificato" : "Salvato",
+              color: vm.hasUnsavedChanges ? Color(rgb: 0xFFB74D) : Color(rgb: 0x4CE08A))
+    }
+
+    /// Etichetta testuale (non un pallino): la parola è sempre scritta per intero e non viene mai compressa.
+    private func badge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(Capsule(style: .continuous).fill(color.opacity(0.18)))
+            .overlay(Capsule(style: .continuous).strokeBorder(color.opacity(0.35), lineWidth: 0.75))
+            .layoutPriority(2)
+            .animation(.easeInOut(duration: 0.2), value: text)
     }
 
     // MARK: - Viewport 3D
@@ -162,7 +185,7 @@ struct ContentView: View {
                 brightnessPanel
                 Spacer()
             }
-            Text("Trascina: orbita (in POV: guarda intorno) · tasto destro o ⇧/⌥ + trascina: pan · rotellina / pizzico: zoom · click: seleziona · frecce e archi del Gumball: sposta / ruota (⌃ = a passi)")
+            Text("Trascina: orbita (in POV: guarda intorno) · tasto destro o ⌥ + trascina: pan · rotellina / pizzico: zoom · click: seleziona · frecce e archi del Gumball: sposta / ruota (Shift = a passi)")
                 .font(.system(.caption2, design: .rounded))
                 .foregroundStyle(.white.opacity(0.7))
                 .multilineTextAlignment(.center)
@@ -287,6 +310,22 @@ struct ContentView: View {
             .help(mannequins.isEmpty
                   ? "Vista Manichino (POV): aggiungi un manichino dalla scheda Palco"
                   : "Vista Manichino (POV): guarda dagli occhi del manichino")
+            Rectangle()                                              // divisore verticale sottile
+                .fill(Color.white.opacity(0.18))
+                .frame(width: 1, height: 18)
+                .padding(.horizontal, 3)
+            Button {
+                vm.isOrthographic.toggle()
+            } label: {
+                Text("Orto")
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .buttonStyle(GlassButtonStyle(prominent: vm.isOrthographic))
+            .fixedSize(horizontal: true, vertical: false)
+            .help(vm.isOrthographic
+                  ? "Orto attivo: Frontale, Laterale e Superiore in proiezione ortogonale (zoom con rotellina / pizzico)"
+                  : "Orto: usa la proiezione ortogonale nelle viste Frontale, Laterale e Superiore")
         }
         .fixedSize(horizontal: true, vertical: false)       // i pulsanti non vengono mai compressi né vanno a capo
         .buttonStyle(GlassButtonStyle())

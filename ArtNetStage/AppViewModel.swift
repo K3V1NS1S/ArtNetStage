@@ -31,6 +31,19 @@ final class AppViewModel: ObservableObject {
     /// Cronologia annulla/ripristina (⌘Z / ⇧⌘Z).
     let history: SceneHistory
 
+    /// Pulsante «Orto» della barra viste: proiezione ortogonale in Frontale / Laterale / Superiore.
+    @Published var isOrthographic: Bool = false {
+        didSet { if isOrthographic != oldValue { stage.setOrthographic(isOrthographic) } }
+    }
+
+    /// `true` se ci sono modifiche non salvate (alimenta l'etichetta «Modificato» / «Salvato» nel footer).
+    var hasUnsavedChanges: Bool { isDirty }
+
+    // Trascinamento Gumball di una luce: la scena 3D si aggiorna a ogni movimento del mouse (anteprima),
+    // il modello dati e le viste SwiftUI a ~30 Hz e al rilascio, così il cursore non aspetta mai l'interfaccia.
+    private var liveFixture: PatchedFixture?
+    private var liveFlushWork: DispatchWorkItem?
+
     private var bag = Set<AnyCancellable>()
     private var ignoreDirty = false
 
@@ -70,7 +83,10 @@ final class AppViewModel: ObservableObject {
         // Un trascinamento del Gumball è un solo passo di cronologia, chiuso al rilascio del mouse.
         let history = self.history
         stage.onGizmoDragBegan = { history.beginHold() }
-        stage.onGizmoDragEnded = { history.endHold() }
+        stage.onGizmoDragEnded = { [weak self] in
+            self?.finishLiveFixtureDrag()          // l'ultimo valore entra nel modello prima di chiudere il passo di cronologia
+            history.endHold()
+        }
 
         // Ogni modifica alla patch o a Net/SubNet aggiorna scena 3D e universi dichiarati nell'ArtPollReply.
         Publishers.CombineLatest3(patch.$patched, server.$net, server.$subNet)
@@ -102,6 +118,9 @@ final class AppViewModel: ObservableObject {
         // Qualsiasi modifica a patch, palco o oggetti segna la scena come "modificata".
         Publishers.MergeMany(
             patch.$patched.map { _ in () }.eraseToAnyPublisher(),
+            patch.$library.map { _ in () }.eraseToAnyPublisher(),
+            server.$net.map { _ in () }.eraseToAnyPublisher(),
+            server.$subNet.map { _ in () }.eraseToAnyPublisher(),
             scene.$stage.map { _ in () }.eraseToAnyPublisher(),
             scene.$objects.map { _ in () }.eraseToAnyPublisher(),
             scene.$ambientLevel.map { _ in () }.eraseToAnyPublisher(),
@@ -117,10 +136,45 @@ final class AppViewModel: ObservableObject {
         isDirty = false     // le emissioni iniziali dei publisher non sono modifiche dell'utente
     }
 
+    private var lastDeclaredUniverses: [Int]?
+
+    /// Anteprima immediata in 3D + scrittura del modello con cadenza limitata.
+    private func commitLive(_ f: PatchedFixture) {
+        liveFixture = f
+        stage.previewFixture(f)
+        guard liveFlushWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.liveFlushWork = nil
+            self?.flushLiveFixture()
+        }
+        liveFlushWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.033, execute: work)
+    }
+
+    private func flushLiveFixture() {
+        guard let f = liveFixture, let i = patch.patched.firstIndex(where: { $0.id == f.id }) else { return }
+        if patch.patched[i] != f { patch.patched[i] = f }
+    }
+
+    private func finishLiveFixtureDrag() {
+        liveFlushWork?.cancel()
+        liveFlushWork = nil
+        flushLiveFixture()
+        liveFixture = nil
+    }
+
     private func apply(fixtures: [PatchedFixture], net: Int, subNet: Int) {
         let base = ((net & 0x7F) << 8) | ((subNet & 0x0F) << 4)
+        var fixtures = fixtures
+        // Durante il trascinamento la luce mostra sempre l'ultima anteprima, mai un valore del modello più vecchio.
+        if let live = liveFixture, let i = fixtures.firstIndex(where: { $0.id == live.id }) { fixtures[i] = live }
         stage.setFixtures(fixtures, portBase: base)
-        server.setPatchedUniverses(Set(fixtures.map(\.universe)).sorted())
+        // Gli universi dichiarati cambiano di rado: durante il trascinamento di una luce non si ricostruisce la configurazione del nodo.
+        let universes = Set(fixtures.map(\.universe)).sorted()
+        if universes != lastDeclaredUniverses {
+            lastDeclaredUniverses = universes
+            server.setPatchedUniverses(universes)
+        }
     }
 
     // MARK: - Titolo e informazioni
@@ -166,15 +220,19 @@ final class AppViewModel: ObservableObject {
     private func gizmoTranslate(_ id: UUID, axis: Int, value: Double) {
         guard value.isFinite else { return }
         if let i = patch.patched.firstIndex(where: { $0.id == id }) {
+            // Una sola scrittura per evento di trascinamento (una sola notifica ai modelli e alla scena 3D),
+            // con il valore esatto del cursore: nessun arrotondamento.
+            var f = (liveFixture?.id == id ? liveFixture : nil) ?? patch.patched[i]
             switch axis {
-            case 0: patch.patched[i].x = value
-            case 1: patch.patched[i].y = value
-            default: patch.patched[i].z = value
+            case 0: f.x = value
+            case 1: f.y = value
+            default: f.z = value
             }
-            if patch.patched[i].mountedOn != nil {
-                patch.patched[i].mountedOn = nil
-                patch.patched[i].mountSlot = nil
+            if f.mountedOn != nil {
+                f.mountedOn = nil
+                f.mountSlot = nil
             }
+            commitLive(f)
         } else if let i = scene.objects.firstIndex(where: { $0.id == id }) {
             switch axis {
             case 0: scene.objects[i].x = value
@@ -189,16 +247,18 @@ final class AppViewModel: ObservableObject {
     private func gizmoRotate(_ id: UUID, axis: Int, value: Double) {
         guard value.isFinite else { return }
         if let i = patch.patched.firstIndex(where: { $0.id == id }) {
+            var f = (liveFixture?.id == id ? liveFixture : nil) ?? patch.patched[i]
             switch axis {
-            case 0: patch.patched[i].staticTilt = value
+            case 0: f.staticTilt = value
             case 1:
-                patch.patched[i].yaw = value
-                if patch.patched[i].mountedOn != nil {
-                    patch.patched[i].mountedOn = nil
-                    patch.patched[i].mountSlot = nil
+                f.yaw = value
+                if f.mountedOn != nil {
+                    f.mountedOn = nil
+                    f.mountSlot = nil
                 }
-            default: patch.patched[i].staticPan = value
+            default: f.staticPan = value
             }
+            commitLive(f)
         } else if let i = scene.objects.firstIndex(where: { $0.id == id }) {
             switch axis {
             case 0: scene.objects[i].pitch = value
