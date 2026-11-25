@@ -141,35 +141,43 @@ struct StagePanelView: View {
     private var listBox: some View {
         GroupBox(label: Label("Elementi in scena", systemImage: "list.bullet.rectangle")) {
             List(selection: $scene.selectedEntityID) {
-                Section("Luci") {
-                    ForEach(patch.patched) { f in
-                        HStack(spacing: 8) {
-                            Image(systemName: f.profile.type.icon).frame(width: 20)
-                            Text(f.label).lineLimit(1)
-                            Spacer()
-                            Text("U\(f.universe) \(f.startAddress)")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                        }
-                        .tag(f.id)
+                listHeader("Luci")
+                ForEach(patch.patched) { f in
+                    HStack(spacing: 8) {
+                        Image(systemName: f.profile.type.icon).frame(width: 20)
+                        Text(f.label).lineLimit(1)
+                        Spacer()
+                        Text("U\(f.universe) \(f.startAddress)")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
                     }
+                    .tag(f.id)
                 }
-                Section("Oggetti") {
-                    ForEach(scene.objects) { o in
-                        HStack(spacing: 8) {
-                            Image(systemName: o.kind.icon).frame(width: 20)
-                            Text(o.name).lineLimit(1)
-                            Spacer()
-                            Text(o.kind.rawValue)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .tag(o.id)
+                listHeader("Oggetti")
+                ForEach(scene.objects) { o in
+                    HStack(spacing: 8) {
+                        Image(systemName: o.kind.icon).frame(width: 20)
+                        Text(o.name).lineLimit(1)
+                        Spacer()
+                        Text(o.kind.rawValue)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    .tag(o.id)
                 }
             }
             .frame(height: 250)
         }
+    }
+
+    /// Intestazione di gruppo: testo pulito sul vetro della card, senza barra di sezione né sfondo (uguale per «Luci» e «Oggetti»).
+    private func listHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.bold())
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+            .listRowBackground(Color.clear)
     }
 
     // MARK: - Ispettore
