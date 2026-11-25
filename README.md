@@ -1,4 +1,4 @@
-# ArtNet Stage 1.2 — nodo Art-Net virtuale + visualizzatore 3D per macOS
+# ArtNet Stage 1.3 — nodo Art-Net virtuale + visualizzatore 3D per macOS
 
 App nativa **macOS 13+** (Swift 5.9, SwiftUI MVVM, SceneKit, BSD sockets) che si comporta come una centralina Art-Net
 collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey & co. inviano.
@@ -103,12 +103,48 @@ Il lampeggio è integrato sull'intervallo di ogni frame: a frequenze vicine al r
 Il preset «Moving Head Beam 12ch» ora usa i ruoli `Gobo` e `Prisma` e la modalità ruota; se avevi già una libreria salvata dalla 1.1 i due canali vengono promossi in automatico.
 Gobo e prisma non si applicano alle barre LED multi-pixel.
 
+## Novità della 1.3
+
+**Barra LED** (Fixture Builder ▸ tipologia «Barra LED Multi-Pixel»)
+* *Tipo di barra:* `Non motorizzata` (fissa) oppure `Motorizzata`: il canale **Tilt** viene aggiunto come primo canale e inclina l'intera barra attorno al proprio asse longitudinale (escursione regolabile).
+* *LED:* menu 4 / 8 / 10 / 12 / 16 / 20 / 24 / 32 più un contatore fino a 170; modalità **RGB** (3 canali per LED) o **RGBW** (4), valida per barre fisse e motorizzate.
+* *Dimensioni:* lunghezza, altezza e spessore si regolano per ogni luce nella Patch (campi numerici + scala %); il passo dei LED si adatta alla lunghezza.
+* *Pixel mapper:* mappa grafica con i LED numerati e i canali in sequenza (nel Builder è la mappa della sola assegnazione; nella Patch, per la luce selezionata, mostra i valori DMX reali).
+  Click su un LED = lo accende/spegne con il colore di prova scelto: nel 3D si accende **solo quel segmento**, con il suo cono.
+
+**PAR LED e Wall Wash**
+* Forma del corpo `Tondo` (cilindrico) o `Rettangolare`. Modalità colore **RGB / RGBW** per PAR e Wall Wash (niente ruota colori: è dei proiettori a testa mobile).
+* Nuovi preset in libreria: «Wall Wash RGBW 7ch», «Barra LED motorizzata 8 pixel RGBW» e «Macchina del Fumo 1ch» (aggiunti una sola volta alla libreria già esistente).
+* **Dimensioni 3D** per teste mobili, PAR, Wall Wash, barre e macchina del fumo: larghezza / altezza / profondità e scala uniforme, in Patch ▸ luce selezionata. Salvate per ogni luce.
+
+**Stativi / cavalletti** (pannello Palco ▸ Oggetti 3D ▸ «Stativo / Cavalletto luci»)
+* Tre varianti: `Singolo` (1 attacco), `T-Bar 2 posti`, `T-Bar 4 posti`. Altezza asta (estensione), larghezza della barra superiore e ingombro della base a treppiede regolabili.
+* Le luci si agganciano ai punti di montaggio dal pannello dello stativo («Attacchi per le luci») o dalla Patch («Aggancia a»). Una luce agganciata segue lo stativo se lo sposti, lo ruoti o ne cambi altezza/larghezza; spostarla a mano la stacca.
+
+**Occlusione dei fasci:** per ogni fascio (e per ogni LED della barra, e per ogni sotto-fascio del prisma) si esegue un raycast `hitTestWithSegment` lungo l'asse contro oggetti, manichini e stativi, più un'intersezione analitica con pedana e suolo.
+Il cono viene troncato alla distanza dell'impatto e sulla superficie colpita compare la macchia di luce (orientata secondo la normale). Il fascio non prosegue oltre.
+
+**Macchina del fumo:** tipologia «Macchina del Fumo» con canale ruolo `Fumo` (0 = spenta, 255 = emissione massima). Nel 3D è un solo `SCNParticleSystem` con sprite sfumati (≈ 16 particelle/s al massimo, nessun calcolo volumetrico).
+Nella Patch c'è uno slider di prova.
+
+**Gumball 3D:** con un elemento selezionato (oggetti, manichino, stativi, luci) compare al suo centro: frecce **X rosso, Y verde (verticale), Z blu** per spostare e tre archi per ruotare, sempre visibili e cliccabili anche dietro l'oggetto.
+* Click su una freccia/arco: l'orbita della camera si blocca e il trascinamento è vincolato a quell'asse; il movimento del cursore viene proiettato sull'asse 3D. I campi numerici della sidebar si aggiornano in tempo reale.
+  Al rilascio i controlli della camera tornano normali. Con **⌃** premuto: passi di 5 cm / 5°.
+* Archi: **verde** = orientamento base (yaw); **rosso** = inclinazione dell'oggetto / Tilt di una luce; **blu** = rollio dell'oggetto / Pan di una luce. Gli stativi e la macchina del fumo ruotano solo sul verde.
+
+**Luminosità** (pannello in basso a sinistra nella vista 3D, salvata nella scena)
+* *Elementi scena* (0–100 %): luce ambiente + materiali senza illuminazione (pedana, bagliore delle americane, scritta). Aiuta a distinguere palco, stativi, parallelepipedi e manichini anche al buio. **Lo sfondo resta sempre nero (`NSColor.black`).**
+* *Luci (master)* (0–200 %): moltiplicatore sull'intensità delle `SCNLight` delle fixture e sulla luminosità dei coni e delle macchie; non tocca la luce ambiente.
+
+**File:** il formato `.artnetstage` passa alla versione **3** (dimensioni, forma, barre motorizzate, stativi con aggancio, fumo, inclinazione/rollio degli oggetti, posizioni e rotazioni da Gumball, i due livelli di luminosità).
+La 1.3 apre ancora i formati 1 e 2; le versioni precedenti rifiutano i file di formato 3 con un messaggio chiaro.
+
 ## Versione
 
-La versione è **1.2** (build 3): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
-Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.2** e **Build = 3**
-(equivale a `MARKETING_VERSION = 1.2`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
-Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 1.2` e `CFBundleVersion = 3`
+La versione è **1.3** (build 4): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
+Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.3** e **Build = 4**
+(equivale a `MARKETING_VERSION = 1.3`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
+Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 1.3` e `CFBundleVersion = 4`
 (le variabili `APP_VERSION` e `APP_BUILD` in cima allo script: cambiale insieme a `AppInfo` quando alzi la versione).
 
 ## Icona dell'app
@@ -155,7 +191,7 @@ locale sono già gestite (resta solo da consentire l'accesso alla prima esecuzio
 3. Lascia *Hardened Runtime* attivo se vuoi, non interferisce.
 
 ### 3. Info.plist, versione e permesso rete locale
-**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 1.2, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
+**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 1.3, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
 In alternativa aggiungi a mano le chiavi nella scheda **Info** del target. Alla prima esecuzione consenti l'accesso alla rete locale.
 
 ### 4. Primo avvio
