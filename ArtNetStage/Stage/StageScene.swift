@@ -135,6 +135,17 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         lock.unlock()
     }
 
+    /// Aggiorna subito una sola luce nella scena 3D (trascinamento del Gumball), senza aspettare il giro del modello dati:
+    /// la luce resta incollata al cursore anche se l'interfaccia è occupata.
+    func previewFixture(_ f: PatchedFixture) {
+        if let i = uiFixtures.firstIndex(where: { $0.id == f.id }) { uiFixtures[i] = f }
+        lock.lock()
+        var list = pending.fixtures ?? uiFixtures
+        if let i = list.firstIndex(where: { $0.id == f.id }) { list[i] = f }
+        pending.fixtures = list
+        lock.unlock()
+    }
+
     func setStage(_ s: StageConfig) {
         lock.lock()
         pending.stage = s
@@ -213,6 +224,14 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         pivotNode.eulerAngles = SCNVector3(0, CGFloat(r.yaw * toRad), 0)
         pitchNode.eulerAngles = SCNVector3(CGFloat(-r.pitch * toRad), 0, 0)
         cameraNode.position = SCNVector3(0, 0, CGFloat(r.dist))
+        if let cam = cameraNode.camera {
+            cam.usesOrthographicProjection = orthoActive
+            if orthoActive {
+                // `orthographicScale` è lo stato dello zoom in ortogonale (rotellina / pizzico lo cambiano direttamente);
+                // all'ingresso vale distanza × tan(FOV/2): stessa inquadratura della prospettiva.
+                cam.orthographicScale = orthoScale
+            }
+        }
         SCNTransaction.commit()
     }
 
@@ -244,6 +263,12 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
     /// Zoom: una breve transizione rende fluidi anche i singoli scatti della rotellina.
     func zoom(factor: Double) {
         if povID != nil { return }                         // in POV l'ingrandimento si regola con lo slider FOV
+        if orthoActive {
+            // In ortogonale la distanza Z non cambia l'inquadratura: si agisce direttamente su orthographicScale.
+            orthoScale = min(max(orthoScale * factor, Self.minOrthoScale), Self.maxOrthoScale)
+            applyRig(duration: 0.12, timing: .easeOut)
+            return
+        }
         rig.dist *= factor
         applyRig(duration: 0.12, timing: .easeOut)
     }
@@ -255,6 +280,9 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
     /// Anima la camera verso una vista preimpostata (SCNTransaction, 0.9 s).
     func setPreset(_ preset: CameraPreset) {
         leavePOVForOrbit()
+        lastPreset = preset
+        // Ortogonale solo per Frontale / Laterale / Superiore con «Orto» attivo; 3/4 torna in prospettiva.
+        let wantsOrtho = orthoEnabled && preset != .threeQuarter
         let fit = fitDistance()
         var goal: Rig
         switch preset {
@@ -270,6 +298,8 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         // Rotazione equivalente più vicina, per non fare giri completi.
         goal.yaw += 360 * ((rig.yaw - goal.yaw) / 360).rounded()
         rig = goal
+        orthoActive = wantsOrtho
+        if wantsOrtho { orthoScale = orthoScaleMatching(distance: goal.dist) }
         applyRig(duration: 0.9)
     }
 
@@ -279,6 +309,8 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
 
     func applyCamera(_ s: CameraSnapshot) {
         leavePOVForOrbit()
+        orthoActive = false
+        lastPreset = nil
         var goal = Rig(yaw: s.yaw, pitch: s.pitch, dist: s.dist, tx: s.tx, tz: s.tz)
         goal.yaw += 360 * ((rig.yaw - goal.yaw) / 360).rounded()
         rig = goal
@@ -411,7 +443,7 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
     }
 
     /// Aggiorna il modello con il movimento del cursore proiettato sull'asse scelto.
-    /// Con `snap` (tasto ⌃) lo spostamento va a passi di 5 cm e la rotazione a passi di 5°.
+    /// Il movimento è sempre continuo; con `snap` (tasto ⇧ Shift premuto) lo spostamento va a passi di 10 cm e la rotazione a passi di 15°.
     func updateGizmoDrag(to point: CGPoint, snap: Bool) {
         guard var d = drag else { return }
         switch d.handle {
@@ -419,8 +451,9 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
             let dx = Double(point.x - d.startPoint.x)
             let dy = Double(point.y - d.startPoint.y)
             let meters = (dx * d.axisScreen.x + dy * d.axisScreen.y) / d.axisLenSq
-            var v = d.startValue + meters
-            if snap { v = (v / 0.05).rounded() * 0.05 }
+            // Senza Shift: spostamento continuo, esattamente quello del cursore. Con Shift: multipli di 10 cm dallo spostamento iniziale.
+            let deltaMeters = snap ? (meters / Self.snapMove).rounded() * Self.snapMove : meters
+            var v = d.startValue + deltaMeters
             if axis == 1 { v = max(v, 0) }          // l'altezza è sopra il piano del palco
             onGizmoTranslate?(d.id, axis, v)
         case .rotate(let axis):
@@ -430,13 +463,17 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
             while delta < -Double.pi { delta += 2 * Double.pi }
             d.total += delta
             d.lastAngle = ang
-            var v = d.startValue + d.sign * d.total * 180 / Double.pi
-            if snap { v = (v / 5).rounded() * 5 }
+            // Senza Shift: rotazione continua. Con Shift: multipli di 15° dalla rotazione iniziale.
+            let deltaDeg = d.sign * d.total * 180 / Double.pi
+            var v = d.startValue + (snap ? (deltaDeg / Self.snapAngle).rounded() * Self.snapAngle : deltaDeg)
             v -= 360 * ((v + 180) / 360).rounded(.down)       // riporta in [-180, 180)
             onGizmoRotate?(d.id, axis, v)
             drag = d
         }
     }
+
+    private static let snapMove = 0.1        // metri, solo con ⇧
+    private static let snapAngle = 15.0      // gradi, solo con ⇧
 
     func endGizmoDrag() {
         let wasDragging = drag != nil
@@ -533,7 +570,7 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         if let fixtures = p.fixtures {
             var newMap: [UUID: FixtureRenderer] = [:]
             for f in fixtures {
-                if let existing = renderers[f.id], existing.signature == FixtureRenderer.signature(for: f) {
+                if let existing = renderers[f.id], existing.hasSameStructure(as: f) {
                     existing.updateFixture(f)
                     newMap[f.id] = existing
                 } else {
@@ -578,6 +615,43 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         }
     }
 
+    // MARK: - Proiezione ortogonale (main thread)
+
+    /// Pulsante «Orto» attivo: le viste Frontale, Laterale e Superiore usano la proiezione ortogonale.
+    private var orthoEnabled = false
+    /// La camera è attualmente in proiezione ortogonale.
+    private var orthoActive = false
+    private var lastPreset: CameraPreset?
+
+    /// Attiva o disattiva «Orto». Se la vista corrente è Frontale / Laterale / Superiore il cambio è immediato.
+    func setOrthographic(_ on: Bool) {
+        orthoEnabled = on
+        guard povID == nil else { return }
+        let want = on && (lastPreset == .front || lastPreset == .side || lastPreset == .top)
+        if want && !orthoActive {
+            orthoScale = orthoScaleMatching(distance: rig.dist)       // stessa scala visiva della prospettiva
+        } else if !want && orthoActive {
+            rig.dist = orthoScale / Self.tanHalfFOV()                 // si torna in prospettiva mantenendo lo zoom raggiunto
+        }
+        orthoActive = want
+        applyRig(duration: 0.25)
+    }
+
+    /// Scala ortogonale (metà altezza visibile) che mostra l'inquadratura di una camera prospettica a `distance`:
+    /// `orthographicScale = distance × tan(fieldOfView / 2)`.
+    private func orthoScaleMatching(distance: Double) -> Double {
+        min(max(distance * Self.tanHalfFOV(), Self.minOrthoScale), Self.maxOrthoScale)
+    }
+
+    private static func tanHalfFOV() -> Double {
+        tan(Double(Self.defaultFOV) * Double.pi / 180 / 2)
+    }
+
+    /// Zoom corrente in ortogonale (metà altezza visibile, in metri).
+    private var orthoScale = 10.0
+    private static let minOrthoScale = 0.5
+    private static let maxOrthoScale = 120.0
+
     // MARK: - Vista in prima persona dal manichino (main thread)
 
     private var povID: UUID?
@@ -599,6 +673,8 @@ final class StageController: NSObject, SCNSceneRendererDelegate {
         guard uiObjects.contains(where: { $0.id == objectID && $0.kind == .mannequin }) else { return }
         let wasActive = povID != nil
         if !wasActive { povLastYaw = rig.yaw }
+        orthoActive = false                       // il POV è sempre in prospettiva
+        cameraNode.camera?.usesOrthographicProjection = false
         povID = objectID
         povFOV = min(max(fov, Self.povMinFOV), Self.povMaxFOV)
         povYawOffset = 0

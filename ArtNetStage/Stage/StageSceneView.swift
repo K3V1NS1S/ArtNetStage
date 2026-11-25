@@ -8,7 +8,8 @@ import SceneKit
 /// - rotellina, due dita sul trackpad (scroll) o pizzico: zoom
 /// - click senza trascinamento: seleziona fixture/oggetto (hitTest); doppio click: vista 3/4
 /// - Gumball (con un elemento selezionato): un click su una freccia o su un arco blocca l'orbita della camera
-///   e vincola il trascinamento a quel solo asse; con ⌃ premuto spostamento a passi di 5 cm e rotazione a 5°
+///   e vincola il trascinamento a quel solo asse. Il movimento è continuo; solo tenendo premuto ⇧ (Shift) lo
+///   spostamento va a passi di 10 cm e la rotazione a passi di 15°
 final class StageSCNView: SCNView {
     weak var controller: StageController?
 
@@ -43,7 +44,7 @@ final class StageSCNView: SCNView {
     override func mouseDragged(with event: NSEvent) {
         if gizmoDragging {
             let p = convert(event.locationInWindow, from: nil)
-            controller?.updateGizmoDrag(to: p, snap: event.modifierFlags.contains(.control))
+            controller?.updateGizmoDrag(to: p, snap: event.modifierFlags.contains(.shift))
             return
         }
         let dx = Double(event.deltaX)
