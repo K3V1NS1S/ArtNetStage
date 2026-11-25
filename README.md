@@ -1,4 +1,4 @@
-# ArtNet Stage 1.1 — nodo Art-Net virtuale + visualizzatore 3D per macOS
+# ArtNet Stage 1.2 — nodo Art-Net virtuale + visualizzatore 3D per macOS
 
 App nativa **macOS 13+** (Swift 5.9, SwiftUI MVVM, SceneKit, BSD sockets) che si comporta come una centralina Art-Net
 collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey & co. inviano.
@@ -28,14 +28,16 @@ ArtNetStage/
 │   └── NetworkInterfaces.swift getifaddrs + SystemConfiguration, alias IP via osascript/ifconfig
 ├── Stage/
 │   ├── StageScene.swift        rig camera pivot→pitch→camera, palco dinamico, hitTest, loop a 60 fps
-│   ├── FixtureRenderer.swift   coni additivi, SCNLight spot, pan/tilt con smorzamento, RGBW, color wheel, strobe, pixel
+│   ├── FixtureRenderer.swift   coni additivi, SCNLight spot, pan/tilt, modalità colore (ruota/RGB/RGBW), strobo in Hz, gobo, prisma, pixel
 │   ├── StageObjectRenderer.swift parallelepipedi e manichini (materiale blinn, castsShadow)
+│   ├── GoboMask.swift          maschere gobo (PNG incorporati): immagine per SCNLight.gobo, macchia a terra, fascio di raggi; importatore JPG/PNG
 │   ├── SceneHelpers.swift      linee, contorno di selezione, materiali
 │   └── StageSceneView.swift    NSViewRepresentable + mouse/trackpad (orbita, pan, zoom, click per selezionare)
 └── Views/
     ├── NetworkPanelView.swift  interfacce, IP, Net/SubNet, alias IP
     ├── PatchView.swift         patch, cavi daisy-chain, conflitti, mappa universi, posizione 3D
-    ├── FixtureBuilderView.swift editor profili, color wheel, pixel, import/export JSON
+    ├── FixtureBuilderView.swift editor profili, mappatura canali, pixel, import/export JSON
+    ├── FixtureOpticsEditors.swift modalità colore, strobo (Hz), gobo con NSOpenPanel, prisma radiale
     ├── StagePanelView.swift    dimensioni palco/americane, oggetti 3D, elenco unico degli elementi in scena
     └── DMXMonitorView.swift    sniffer: Hz, universi attivi, griglia live 1–512
 ```
@@ -71,12 +73,42 @@ Le scene non sono più preset interni: si salvano e si aprono come file veri sul
 * Doppio click su un `.artnetstage` nel Finder apre l'app (grazie ai tipi di documento in `Info.plist`).
 * Resta un salvataggio automatico dell'ultimo stato di lavoro in `~/Library/Application Support/ArtNetStage/` (`patch.json`, `library.json`, `scene.json`) solo per riaprire l'app dove l'avevi lasciata: non sostituisce il salvataggio su file.
 
+## Novità della 1.2 — ottica delle fixture
+
+Tutto si configura nel pannello **Fixture** (Fixture Builder) e vale per le luci già patchate con quel profilo.
+
+**Modalità colore** (sezione «Colore del fascio»): `Ruota Colori`, `RGB` o `RGBW`.
+* *RGB / RGBW:* il colore segue direttamente i canali (nessuna transizione). In RGBW il bianco si somma a R, G, B.
+* *Ruota Colori:* ogni slot associa un intervallo DMX (0–255) a un colore. L'ordine fisico degli slot sulla ruota è quello dei valori DMX crescenti.
+  Passando da uno slot a uno **non adiacente** la ruota ruota davvero (14 slot/s, al massimo 0,7 s per il transito completo) e il fascio mostra brevemente i colori intermedi;
+  tra due slot la finestra mostra una miscela dei due. Un valore DMX fuori da ogni intervallo lascia la ruota dov'è.
+* I profili della 1.1 si aprono senza perdere nulla: la modalità viene dedotta dai canali (RGB/RGBW se ci sono, altrimenti ruota).
+
+**Strobo in Hz** (sezione «Strobo»): frequenza massima a DMX 255 per ogni profilo, da 0,5 a 60 Hz (default 16; preset 20 Hz). DMX 0–9 = aperto, DMX 10 = 1 Hz, poi crescita lineare fino al massimo.
+Il lampeggio è integrato sull'intervallo di ogni frame: a frequenze vicine al refresh dello schermo vedi l'ampiezza reale invece di flash persi; il limite fisico resta la frequenza del monitor.
+
+**Gobo personalizzati** (ruolo canale `Gobo`, sezione «Gobo»):
+* Aggiungi quanti intervalli DMX vuoi e, per ciascuno, scegli con il pannello di apertura file (`NSOpenPanel`) un'immagine **JPG o PNG quadrata in bianco e nero**: bianco = passa la luce, nero = la blocca.
+  Un'immagine non quadrata viene ritagliata al centro; viene ridotta a 256×256 in scala di grigi (le zone trasparenti contano come nere). Un intervallo senza immagine è «aperto».
+* La maschera sagoma il fascio in quattro punti: `SCNLight.gobo` (illumina davvero oggetti e palco), la macchia sul pavimento, il cono visibile (diventa un fascio di raggi che passa solo dove la maschera è chiara) e, con il prisma, ogni sotto-fascio.
+* Le immagini sono **incorporate nel profilo come PNG in base64**: finiscono dentro i file `.artnetstage` (fixture e libreria) e nell'autosave, senza dipendere dai file originali.
+
+**Prisma radiale** (ruolo canale `Prisma`, sezione «Prisma radiale»):
+* Numero di facce da 2 a 24 (menu con 3, 4, 5, 6, 8, 12, 18, 24 più un contatore), valore DMX da cui il prisma è inserito (default 1), **soglia di rotazione** 0–255 e velocità a DMX 255 in giri/min.
+* Prisma inserito: il fascio si duplica in N sotto-fasci a corona attorno all'asse ottico (ognuno con il suo cono e la sua macchia a terra). Fino alla soglia il prisma resta fermo; oltre ruota in modo continuo
+  con velocità **proporzionale** a (valore − soglia) / (255 − soglia).
+* Per non moltiplicare le luci di scena resta **una sola** `SCNLight` per fixture: con il prisma si allarga per coprire la corona e perde il gobo (che resta su coni e macchie).
+
+**File:** il formato `.artnetstage` passa alla versione 2. La 1.2 apre ancora i file della 1.1; la 1.1 rifiuta quelli della 1.2 con un messaggio chiaro.
+Il preset «Moving Head Beam 12ch» ora usa i ruoli `Gobo` e `Prisma` e la modalità ruota; se avevi già una libreria salvata dalla 1.1 i due canali vengono promossi in automatico.
+Gobo e prisma non si applicano alle barre LED multi-pixel.
+
 ## Versione
 
-La versione è **1.1** (build 2): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
-Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.1** e **Build = 2**
-(equivale a `MARKETING_VERSION = 1.1`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
-Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 1.1` e `CFBundleVersion = 2`
+La versione è **1.2** (build 3): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
+Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.2** e **Build = 3**
+(equivale a `MARKETING_VERSION = 1.2`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
+Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 1.2` e `CFBundleVersion = 3`
 (le variabili `APP_VERSION` e `APP_BUILD` in cima allo script: cambiale insieme a `AppInfo` quando alzi la versione).
 
 ## Icona dell'app
@@ -123,7 +155,7 @@ locale sono già gestite (resta solo da consentire l'accesso alla prima esecuzio
 3. Lascia *Hardened Runtime* attivo se vuoi, non interferisce.
 
 ### 3. Info.plist, versione e permesso rete locale
-**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 1.1, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
+**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 1.2, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
 In alternativa aggiungi a mano le chiavi nella scheda **Info** del target. Alla prima esecuzione consenti l'accesso alla rete locale.
 
 ### 4. Primo avvio
@@ -159,9 +191,9 @@ Le voci esatte cambiano tra versioni; in generale:
 * **Pan/Tilt:** il valore centrale del range (es. DMX 127/128, o 32768 a 16 bit) porta il fascio sull'asse del montaggio
   (verso l'alto a terra, verso il basso se appesa, verso il pubblico se verticale). Usa *Offset Pan/Tilt* e *Inverti* per adattare la scena al tuo rig.
 * **Pan/Tilt Speed:** 0 = massima velocità (~400°/s), 255 = lentissimo (~6°/s); senza canale speed i motori vanno a ~300°/s. In più c'è uno smorzamento esponenziale.
-* **Strobe/Shutter:** valori 0–9 = aperto; 10–255 = da 1 a 16 Hz.
-* **Color wheel:** scatto netto, nessuna interpolazione; fuori da ogni range definito il colore è bianco.
-* **RGBW:** il bianco viene sommato a R, G, B (limitato a 1). Se una fixture ha sia RGB sia ruota colori, i due colori si moltiplicano.
+* **Strobe/Shutter:** valori 0–9 = aperto; 10–255 = da 1 Hz alla frequenza massima del profilo (vedi «Novità della 1.2»).
+* **Color wheel:** con transito fisico tra gli slot (vedi «Novità della 1.2»); senza slot definiti il colore è bianco.
+* **RGB / RGBW:** il bianco (solo in RGBW) viene sommato a R, G, B (limitato a 1). La modalità scelta decide quali canali colore contano: non si moltiplicano più ruota e RGB.
 * **Fixture Builder:** le modifiche a un profilo si riflettono subito sulle luci già patchate con lo stesso profilo. Libreria e patch sono salvate in
   `~/Library/Application Support/ArtNetStage/` (`library.json`, `patch.json`). I profili si possono esportare/importare in JSON.
 * **ArtPollReply:** pacchetto da 239 byte (Art-Net 4), Port-Address a 15 bit, fino a 4 porte per risposta (più risposte con `BindIndex` crescente se la patch usa più di 4 universi).
