@@ -1,4 +1,4 @@
-# ArtNet Stage 2.2 — nodo Art-Net virtuale + visualizzatore 3D per macOS
+# ArtNet Stage 2.3 — nodo Art-Net virtuale + visualizzatore 3D per macOS
 
 App nativa **macOS 13+** (Swift 5.9, SwiftUI MVVM, SceneKit, BSD sockets) che si comporta come una centralina Art-Net
 collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey & co. inviano.
@@ -102,6 +102,18 @@ Il lampeggio è integrato sull'intervallo di ogni frame: a frequenze vicine al r
 **File:** il formato `.artnetstage` passa alla versione 2. La 1.2 apre ancora i file della 1.1; la 1.1 rifiuta quelli della 1.2 con un messaggio chiaro.
 Il preset «Moving Head Beam 12ch» ora usa i ruoli `Gobo` e `Prisma` e la modalità ruota; se avevi già una libreria salvata dalla 1.1 i due canali vengono promossi in automatico.
 Gobo e prisma non si applicano alle barre LED multi-pixel.
+
+## Novità della 2.3
+
+* **Gumball fluido anche per le luci.** Nel codice non c'era alcun arrotondamento delle coordinate delle fixture: lo spostamento e la rotazione scrivono il valore esatto
+  del cursore. Ho alleggerito il percorso del trascinamento: una sola scrittura del modello per evento, confronto per uguaglianza (invece dell'hash dell'intero profilo,
+  gobo inclusi) per decidere se ricostruire il modello 3D della luce, nessuna riconfigurazione del nodo Art-Net a ogni passo e nessun confronto della cronologia mentre si trascina.
+* **Snap solo con Shift.** Senza tasti il movimento del Gumball è sempre continuo; tenendo premuto **Shift** lo spostamento va a passi di 10 cm e la rotazione a passi di 15°
+  (valutato a ogni movimento del mouse, quindi si può premere o rilasciare Shift anche durante il trascinamento). Il pan con ⇧ resta valido fuori dal Gumball; il suggerimento in basso dice «Shift = a passi».
+* **Pulsante «Orto».** Nella pillola delle viste: con Orto attivo, Frontale / Laterale / Superiore usano la proiezione ortogonale con `orthographicScale = distanza × tan(FOV/2)`,
+  cioè la stessa inquadratura della prospettiva; rotellina e pizzico cambiano la scala. 3/4, Manichino (POV) o Orto spento tornano in prospettiva.
+* **Stato del file.** Accanto al nome del file nel footer: «Modificato» (ambra) appena cambia qualcosa (scena, luci, canali DMX, profili, Net/SubNet, impostazioni), «Salvato» (verde) dopo il salvataggio
+  o l'apertura di un file senza modifiche successive. Una scena nuova e intatta non mostra nulla.
 
 ## Novità della 2.2
 
@@ -209,10 +221,10 @@ La 1.3 apre ancora i formati 1 e 2; le versioni precedenti rifiutano i file di f
 
 ## Versione
 
-La versione è **2.2** (build 9): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
+La versione è **2.3** (build 10): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
 Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.3** e **Build = 4**
-(equivale a `MARKETING_VERSION = 2.2`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
-Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.2` e `CFBundleVersion = 9`
+(equivale a `MARKETING_VERSION = 2.3`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
+Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.3` e `CFBundleVersion = 10`
 (le variabili `APP_VERSION` e `APP_BUILD` in cima allo script: cambiale insieme a `AppInfo` quando alzi la versione).
 
 ## Icona dell'app
@@ -259,7 +271,7 @@ locale sono già gestite (resta solo da consentire l'accesso alla prima esecuzio
 3. Lascia *Hardened Runtime* attivo se vuoi, non interferisce.
 
 ### 3. Info.plist, versione e permesso rete locale
-**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 2.2, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
+**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 2.3, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
 In alternativa aggiungi a mano le chiavi nella scheda **Info** del target. Alla prima esecuzione consenti l'accesso alla rete locale.
 
 ### 4. Primo avvio
@@ -301,3 +313,9 @@ Le voci esatte cambiano tra versioni; in generale:
 * **Fixture Builder:** le modifiche a un profilo si riflettono subito sulle luci già patchate con lo stesso profilo. Libreria e patch sono salvate in
   `~/Library/Application Support/ArtNetStage/` (`library.json`, `patch.json`). I profili si possono esportare/importare in JSON.
 * **ArtPollReply:** pacchetto da 239 byte (Art-Net 4), Port-Address a 15 bit, fino a 4 porte per risposta (più risposte con `BindIndex` crescente se la patch usa più di 4 universi).
+
+### 2.3 (revisione)
+- **Orto**: pulsante testuale nella barra viste in alto a destra, con divisore verticale, legato a `isOrthographic`. In Frontale/Laterale/Superiore usa la proiezione ortogonale (`orthographicScale = distanza × tan(FOV/2)`); rotellina e pizzico cambiano direttamente `orthographicScale`; in 3/4 e Manichino torna prospettica.
+- **Gumball 1:1**: la luce segue il cursore (anteprima 3D immediata, modello dati a ~30 Hz e al rilascio), nessun arrotondamento.
+- **Shift**: snap relativo allo spostamento (10 cm) e alla rotazione (15°); senza Shift movimento continuo.
+- **Footer**: etichetta testuale «Modificato» / «Salvato» accanto al nome file, senza pallino.
