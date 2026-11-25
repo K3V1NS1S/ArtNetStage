@@ -1,4 +1,4 @@
-# ArtNet Stage 1.3 — nodo Art-Net virtuale + visualizzatore 3D per macOS
+# ArtNet Stage 1.4 — nodo Art-Net virtuale + visualizzatore 3D per macOS
 
 App nativa **macOS 13+** (Swift 5.9, SwiftUI MVVM, SceneKit, BSD sockets) che si comporta come una centralina Art-Net
 collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey & co. inviano.
@@ -103,6 +103,18 @@ Il lampeggio è integrato sull'intervallo di ogni frame: a frequenze vicine al r
 Il preset «Moving Head Beam 12ch» ora usa i ruoli `Gobo` e `Prisma` e la modalità ruota; se avevi già una libreria salvata dalla 1.1 i due canali vengono promossi in automatico.
 Gobo e prisma non si applicano alle barre LED multi-pixel.
 
+## Novità della 1.4
+
+* **Prisma a 3 intervalli DMX.** Nel Fixture Builder, riquadro «Prisma radiale», il canale Prisma ha tre intervalli configurabili (0–255):
+  **Spento** (es. 0–9: fascio singolo), **Attivo fisso** (es. 10–127: N sotto-fasci a corona, senza rotazione) e **Rotazione**
+  (es. 128–255: la corona ruota attorno all'asse ottico; la velocità cresce linearmente da «inizio rotazione» a «fine rotazione», in giri/min).
+  Se gli intervalli si sovrappongono vale l'ordine Spento → Rotazione → Fisso; i valori fuori da ogni intervallo lasciano il prisma spento.
+  I profili 1.2/1.3 (soglia singola) vengono convertiti automaticamente in tre intervalli equivalenti.
+* **Piano del palco.** In «Dimensioni del palco» trovi il colore del piano (ColorPicker) e lo slider «Luminosità piano» (0–150%),
+  indipendenti dallo slider «Elementi scena». Il pulsante «Standard» ripristina colore e luminosità predefiniti.
+* **File `.artnetstage`.** Gli intervalli del prisma e colore/luminosità del piano vengono salvati e caricati; i file 1.3 si aprono con i
+  valori convertiti o predefiniti. Il formato resta il 3.
+
 ## Novità della 1.3
 
 **Barra LED** (Fixture Builder ▸ tipologia «Barra LED Multi-Pixel»)
@@ -141,10 +153,10 @@ La 1.3 apre ancora i formati 1 e 2; le versioni precedenti rifiutano i file di f
 
 ## Versione
 
-La versione è **1.3** (build 4): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
+La versione è **1.4** (build 5): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
 Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.3** e **Build = 4**
-(equivale a `MARKETING_VERSION = 1.3`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
-Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 1.3` e `CFBundleVersion = 4`
+(equivale a `MARKETING_VERSION = 1.4`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
+Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 1.4` e `CFBundleVersion = 5`
 (le variabili `APP_VERSION` e `APP_BUILD` in cima allo script: cambiale insieme a `AppInfo` quando alzi la versione).
 
 ## Icona dell'app
@@ -191,7 +203,7 @@ locale sono già gestite (resta solo da consentire l'accesso alla prima esecuzio
 3. Lascia *Hardened Runtime* attivo se vuoi, non interferisce.
 
 ### 3. Info.plist, versione e permesso rete locale
-**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 1.3, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
+**Build Settings ▸ Info.plist File** → `Info.plist` (quello incluso nel pacchetto, già con versione 1.4, tipo `.artnetstage` e `NSLocalNetworkUsageDescription`).
 In alternativa aggiungi a mano le chiavi nella scheda **Info** del target. Alla prima esecuzione consenti l'accesso alla rete locale.
 
 ### 4. Primo avvio

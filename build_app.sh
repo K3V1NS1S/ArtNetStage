@@ -14,8 +14,8 @@ APP="ArtNetStage.app"
 NAME="ArtNetStage"
 MIN_MACOS="13.0"
 
-APP_VERSION="1.3"       # CFBundleShortVersionString (deve coincidere con AppInfo.version nel codice)
-APP_BUILD="4"           # CFBundleVersion            (deve coincidere con AppInfo.build nel codice)
+APP_VERSION="1.4"       # CFBundleShortVersionString (deve coincidere con AppInfo.version nel codice)
+APP_BUILD="5"           # CFBundleVersion            (deve coincidere con AppInfo.build nel codice)
 ICON_SRC="AppIcon.png"  # sorgente dell'icona, nella cartella principale del repository
 ICON_NAME="AppIcon"     # nome del file .icns nel bundle = valore di CFBundleIconFile
 
