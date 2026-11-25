@@ -1,4 +1,4 @@
-# ArtNet Stage 2.3 — nodo Art-Net virtuale + visualizzatore 3D per macOS
+# ArtNet Stage 2.4 — nodo Art-Net virtuale + visualizzatore 3D per macOS
 
 App nativa **macOS 13+** (Swift 5.9, SwiftUI MVVM, SceneKit, BSD sockets) che si comporta come una centralina Art-Net
 collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey & co. inviano.
@@ -221,10 +221,10 @@ La 1.3 apre ancora i formati 1 e 2; le versioni precedenti rifiutano i file di f
 
 ## Versione
 
-La versione è **2.3** (build 10): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
+La versione è **2.4** (build 11): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
 Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.3** e **Build = 4**
-(equivale a `MARKETING_VERSION = 2.3`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
-Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.3` e `CFBundleVersion = 10`
+(equivale a `MARKETING_VERSION = 2.4`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
+Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.4` e `CFBundleVersion = 11`
 (le variabili `APP_VERSION` e `APP_BUILD` in cima allo script: cambiale insieme a `AppInfo` quando alzi la versione).
 
 ## Icona dell'app
@@ -319,3 +319,10 @@ Le voci esatte cambiano tra versioni; in generale:
 - **Gumball 1:1**: la luce segue il cursore (anteprima 3D immediata, modello dati a ~30 Hz e al rilascio), nessun arrotondamento.
 - **Shift**: snap relativo allo spostamento (10 cm) e alla rotazione (15°); senza Shift movimento continuo.
 - **Footer**: etichetta testuale «Modificato» / «Salvato» accanto al nome file, senza pallino.
+
+### 2.4
+- **Ambiente chiuso / sala** (scheda Palco → «Ambiente»): `Palco Aperto` oppure `Ambiente Chiuso / Sala` con pareti di fondo, sinistra, destra e soffitto (fronte pubblico aperto). Larghezza, profondità, altezza soffitto, colore e luminosità delle superfici regolabili; interruttore «Mostra Americana» indipendente in entrambe le modalità. I fasci si fermano su pareti e soffitto (stesso raycast `trace` degli oggetti di scena) senza attraversarli.
+- **Rete → Bridge Virtuale Art-Net (bridge1)**: pulsante «Attiva collegamento feth su bridge1» (password amministratore tramite `NSAppleScript`), indicatore feth0 presente/assente, aggiornamento automatico dell'elenco interfacce e messaggio di errore (es. bridge1 non ancora creato).
+- **Parallelepipedo**: dimensioni da 0,05 m, slider fine (1 cm), stepper da 5 cm e valore decimale libero.
+- **Chiusura**: finestra (X rossa, ⌘W) e app (⌘Q, Esci) chiedono Salva / Non salva / Annulla solo se ci sono modifiche non salvate; il pallino rosso della finestra mostra il punto interno.
+- **File `.artnetstage`**: salvati tipologia ambiente, dimensioni sala, altezza soffitto, colore/luminosità pareti e presenza americana; i file precedenti si aprono come palco aperto (formato 3).
