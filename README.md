@@ -1,4 +1,4 @@
-# ArtNet Stage 2.4 — nodo Art-Net virtuale + visualizzatore 3D per macOS
+# ArtNet Stage 2.5 — nodo Art-Net virtuale + visualizzatore 3D per macOS
 
 App nativa **macOS 13+** (Swift 5.9, SwiftUI MVVM, SceneKit, BSD sockets) che si comporta come una centralina Art-Net
 collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey & co. inviano.
@@ -221,10 +221,10 @@ La 1.3 apre ancora i formati 1 e 2; le versioni precedenti rifiutano i file di f
 
 ## Versione
 
-La versione è **2.4** (build 11): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
+La versione è **2.5** (build 12): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
 Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.3** e **Build = 4**
-(equivale a `MARKETING_VERSION = 2.4`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
-Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.4` e `CFBundleVersion = 11`
+(equivale a `MARKETING_VERSION = 2.5`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
+Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.5` e `CFBundleVersion = 12`
 (le variabili `APP_VERSION` e `APP_BUILD` in cima allo script: cambiale insieme a `AppInfo` quando alzi la versione).
 
 ## Icona dell'app
@@ -326,3 +326,7 @@ Le voci esatte cambiano tra versioni; in generale:
 - **Parallelepipedo**: dimensioni da 0,05 m, slider fine (1 cm), stepper da 5 cm e valore decimale libero.
 - **Chiusura**: finestra (X rossa, ⌘W) e app (⌘Q, Esci) chiedono Salva / Non salva / Annulla solo se ci sono modifiche non salvate; il pallino rosso della finestra mostra il punto interno.
 - **File `.artnetstage`**: salvati tipologia ambiente, dimensioni sala, altezza soffitto, colore/luminosità pareti e presenza americana; i file precedenti si aprono come palco aperto (formato 3).
+
+### 2.5
+- **Gumball più sottile**: aste delle frecce e archi di rotazione molto più fini, coni affusolati e compatti, per non coprire fixture e oggetti. Attorno a frecce e archi c'è una geometria di collisione invisibile (`opacity = 0.001`) più spessa, quindi restano facili da afferrare.
+- **Test Luci** (viewport, in basso a destra): accende tutte le fixture con dimmer/shutter al 100%, un colore saturo diverso per ogni luce (e per ogni pixel delle barre LED) e un movimento fluido casuale di pan/tilt per le luci motorizzate. È solo un override di rendering: non scrive nel DMX, non entra in Annulla/Ripristina e non rende il file «Modificato». Alla disattivazione tornano subito i valori reali Art-Net/DMX e le posizioni effettive di pan/tilt.
