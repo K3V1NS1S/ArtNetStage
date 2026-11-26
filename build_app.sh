@@ -14,8 +14,8 @@ APP="ArtNetStage.app"
 NAME="ArtNetStage"
 MIN_MACOS="13.0"
 
-APP_VERSION="2.5"       # CFBundleShortVersionString (deve coincidere con AppInfo.version nel codice)
-APP_BUILD="12"           # CFBundleVersion            (deve coincidere con AppInfo.build nel codice)
+APP_VERSION="2.6"       # CFBundleShortVersionString (deve coincidere con AppInfo.version nel codice)
+APP_BUILD="13"           # CFBundleVersion            (deve coincidere con AppInfo.build nel codice)
 ICON_SRC="AppIcon.png"  # sorgente dell'icona, nella cartella principale del repository
 ICON_NAME="AppIcon"     # nome del file .icns nel bundle = valore di CFBundleIconFile
 
@@ -144,6 +144,18 @@ else
 fi
 
 plutil -lint "$PLIST" >/dev/null || { echo "Info.plist del bundle non valido."; exit 1; }
+
+# Modello 3D «Kevin» (OBJ + materiale + texture): copiato in Contents/Resources, da dove l'app lo carica con SCNScene(named:).
+MODEL_DIR="Modelli3D"
+echo "Modello 3D Kevin…"
+for MODEL_FILE in kevin.obj kevin.mtl kevin_texture.png; do
+    if [ -f "$MODEL_DIR/$MODEL_FILE" ]; then
+        cp "$MODEL_DIR/$MODEL_FILE" "$APP/Contents/Resources/$MODEL_FILE"
+        echo "  $MODEL_DIR/$MODEL_FILE → Contents/Resources/$MODEL_FILE"
+    else
+        echo "  ATTENZIONE: $MODEL_DIR/$MODEL_FILE non trovato: «Aggiungi Kevin» ripiegherà sulla sagoma del manichino."
+    fi
+done
 
 # Firma ad-hoc (nessun account sviluppatore necessario). Nessuna sandbox: non si applica entitlement.
 # Va fatta DOPO aver inserito icona e Info.plist, altrimenti la firma risulterebbe non valida.
