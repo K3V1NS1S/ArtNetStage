@@ -1,4 +1,4 @@
-# ArtNet Stage 2.6 — nodo Art-Net virtuale + visualizzatore 3D per macOS
+# ArtNet Stage 3.0 — nodo Art-Net virtuale + visualizzatore 3D per macOS
 
 App nativa **macOS 13+** (Swift 5.9, SwiftUI MVVM, SceneKit, BSD sockets) che si comporta come una centralina Art-Net
 collegata al Mac e mostra in tempo reale, in 3D, ciò che QLab, QLC+, Lightkey & co. inviano.
@@ -221,10 +221,10 @@ La 1.3 apre ancora i formati 1 e 2; le versioni precedenti rifiutano i file di f
 
 ## Versione
 
-La versione è **2.6** (build 13): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
+La versione è **3.0** (build 14): `CFBundleShortVersionString` in `Info.plist`, `AppInfo.version` nel codice (footer della sidebar e voce «Informazioni su ArtNet Stage»).
 Il pacchetto non contiene un `project.pbxproj`: il progetto Xcode lo crei tu seguendo i passi sotto. Se usi Xcode imposta **Target ▸ General ▸ Version = 1.3** e **Build = 4**
-(equivale a `MARKETING_VERSION = 2.6`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
-Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 2.6` e `CFBundleVersion = 13`
+(equivale a `MARKETING_VERSION = 3.0`) e usa `Info.plist` come file Info del target, così il tipo `.artnetstage` risulta registrato.
+Con `build_app.sh` non serve fare nulla: copia `Info.plist` nel bundle e vi imposta `CFBundleShortVersionString = 3.0` e `CFBundleVersion = 14`
 (le variabili `APP_VERSION` e `APP_BUILD` in cima allo script: cambiale insieme a `AppInfo` quando alzi la versione).
 
 ## Icona dell'app
@@ -336,3 +336,9 @@ Le voci esatte cambiano tra versioni; in generale:
 - **Vista POV**: Kevin compare nel selettore della vista Manichino insieme ai manichini; la camera sta all'altezza dei suoi occhi e guarda dove guarda lui, con FOV regolabile.
 - **Salvataggio e cronologia**: Kevin è un normale oggetto di scena (`kind` = "Kevin") nei file `.artnetstage` e in Annulla/Ripristina; i file delle versioni precedenti si aprono senza problemi.
 - **Modello nel bundle**: `build_app.sh` copia `Modelli3D/kevin.obj`, `kevin.mtl` e `kevin_texture.png` in `Contents/Resources`. SceneKit non legge i `.glb`, quindi il modello è stato convertito in OBJ (scala, posizione ed orientamento già corretti); il `.glb` originale resta in `Modelli3D/kevin_originale.glb`.
+
+### 3.0
+- **Campi numerici fluidi** (`DecimalTextField`): si scrive liberamente con cifre, `,`, `.` e `-`, senza riformattazioni durante la digitazione. Il valore entra nel modello (con la virgola normalizzata in punto) solo con Invio o quando il campo perde il focus: un solo passo di Annulla. Usato per posizioni, dimensioni, valori del palco e frequenza dello strobo.
+- **⌫ / Canc**: cancellano l'oggetto 3D o la fixture selezionati (ANNULLA con ⌘Z, il documento diventa «Modificato»). Non agiscono mentre si scrive in un campo di testo né con pannelli aperti.
+- **Lucchetto proporzioni** (`lock` / `lock.open`, «Blocca proporzioni»): nelle dimensioni degli oggetti (parallelepipedo, manichino, Kevin) modificare un asse ricalcola gli altri due con lo stesso rapporto.
+- **Ombre reali**: gli spot delle fixture (`SCNLight`, `shadowMode = .forward`, mappa 1024², raggio morbido, bias anti-acne, `zNear` 0,3) proiettano ombre su palco, pareti/soffitto della sala e oggetti. Il piano del palco ora riceve luce dai fasci (la luce ambiente non lo tocca, quindi il suo aspetto base e il suo slider restano indipendenti). Americane, coni, Gumball e griglia non proiettano ombre. Intensità e colore seguono dimmer, strobo e colore effettivi, anche con «Test Luci». Si disattivano con «Ombre dei fasci sugli oggetti» nel pannello Palco.

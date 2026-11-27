@@ -8,9 +8,9 @@
     <key>CFBundleExecutable</key><string>ArtNetStage</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <!-- Versione 2.6 (in Xcode corrisponde a MARKETING_VERSION = 2.6 e CURRENT_PROJECT_VERSION = 13) -->
-    <key>CFBundleShortVersionString</key><string>2.6</string>
-    <key>CFBundleVersion</key><string>13</string>
+    <!-- Versione 3.0 (in Xcode corrisponde a MARKETING_VERSION = 3.0 e CURRENT_PROJECT_VERSION = 14) -->
+    <key>CFBundleShortVersionString</key><string>3.0</string>
+    <key>CFBundleVersion</key><string>14</string>
     <!-- Icona: build_app.sh converte AppIcon.png in Contents/Resources/AppIcon.icns -->
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
